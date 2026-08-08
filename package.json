@@ -8,7 +8,7 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "@astrojs/netlify": "^6.4.1",
+    "@astrojs/netlify": "^8.2.0",
     "@supabase/supabase-js": "^2.45.4",
     "astro": "^7.2.0"
   }
