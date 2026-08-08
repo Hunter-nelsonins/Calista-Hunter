@@ -1,0 +1,44 @@
+---
+import '../styles/global.css';
+const { title = 'Walk Together' } = Astro.props;
+---
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <nav class="topnav">
+      <a class="brand" href="/">Walk Together</a>
+      <a href="/devotionals">Devotionals</a>
+      <a href="/prayers">Prayers</a>
+      <a href="/vision">Our Vision</a>
+      <a href="/checkins">Check In</a>
+      <a href="/admin" class="nav-admin">Admin</a>
+      <span id="nav-avatar-slot"></span>
+    </nav>
+    <main class="container">
+      <slot />
+    </main>
+
+    <script type="module">
+      import { supabase } from '../lib/supabase.js';
+      import { avatarHtml, getAvatarUrl } from '../lib/avatars.js';
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('display_name, avatar_url')
+          .eq('id', session.user.id)
+          .maybeSingle();
+        if (profile) {
+          const avatarUrl = await getAvatarUrl(profile.avatar_url);
+          const slot = document.getElementById('nav-avatar-slot');
+          slot.innerHTML = `<a href="/admin" class="nav-avatar" style="line-height:0;">${avatarHtml({ display_name: profile.display_name, avatarUrl }, 26)}</a>`;
+        }
+      }
+    </script>
+  </body>
+</html>

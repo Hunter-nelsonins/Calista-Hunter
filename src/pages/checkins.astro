@@ -1,0 +1,277 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Weekly Check In | Walk Together">
+  <p class="eyebrow">Weekly check in</p>
+  <h1>How's it going this week?</h1>
+  <p class="home-subtitle" id="status-line"></p>
+
+  <form id="checkin-form" class="card" style="display:flex; flex-direction:column; gap:1.25rem; margin:1.5rem 0 2.5rem;">
+    <div>
+      <label style="font-size:0.9rem; color:var(--ink-soft); font-weight:700;">Three things you're thankful for this week</label>
+      <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:0.5rem;">
+        <input type="text" id="gratitude-1" placeholder="One&hellip;" required />
+        <input type="text" id="gratitude-2" placeholder="Two&hellip;" required />
+        <input type="text" id="gratitude-3" placeholder="Three&hellip;" required />
+      </div>
+      <p style="font-size:0.8rem; color:var(--ink-soft); margin:0.5rem 0 0;">
+        These stay just between the two of you, and only appear once you've both checked in this week.
+      </p>
+    </div>
+    <div>
+      <label style="font-size:0.9rem; color:var(--ink-soft);">How's your walk with God been this week?</label>
+      <textarea id="walk" rows="3"></textarea>
+    </div>
+    <div>
+      <label style="font-size:0.9rem; color:var(--ink-soft);">How are we doing as a couple?</label>
+      <textarea id="relationship" rows="3"></textarea>
+    </div>
+    <div>
+      <label style="font-size:0.9rem; color:var(--ink-soft);">Any prayer needs?</label>
+      <textarea id="needs" rows="2"></textarea>
+    </div>
+    <button type="submit" id="submit-btn">Submit check in</button>
+  </form>
+
+  <h2 style="font-size:1.1rem;">Weekly reviews</h2>
+  <div id="history" style="display:flex; flex-direction:column; gap:1.25rem; margin-top:1rem;"></div>
+
+  <script type="module">
+    import { supabase } from '../lib/supabase.js';
+    import { buildProfileMap, avatarHtml } from '../lib/avatars.js';
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) window.location.href = '/login';
+    const { data: { user } } = await supabase.auth.getUser();
+    const currentUserId = user?.id;
+
+    function esc(s) {
+      const div = document.createElement('div');
+      div.textContent = s ?? '';
+      return div.innerHTML;
+    }
+
+    function mondayOf(date) {
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      return new Date(d.setDate(diff)).toISOString().slice(0, 10);
+    }
+
+    function weekRangeLabel(weekStart) {
+      const start = new Date(weekStart + 'T00:00:00');
+      return `Week of ${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+    }
+
+    const nowWeekStart = mondayOf(new Date());
+
+    const { data: profilesData } = await supabase.from('profiles').select('id, display_name, avatar_url');
+    const profileMap = await buildProfileMap(profilesData);
+    const totalPeople = (profilesData || []).length;
+
+    let myCurrentCheckin = null;
+
+    async function loadForm() {
+      const { data } = await supabase
+        .from('checkins')
+        .select('*')
+        .eq('submitted_by', currentUserId)
+        .eq('week_start', nowWeekStart)
+        .maybeSingle();
+      myCurrentCheckin = data || null;
+      if (data) {
+        document.getElementById('gratitude-1').value = data.gratitude_1 || '';
+        document.getElementById('gratitude-2').value = data.gratitude_2 || '';
+        document.getElementById('gratitude-3').value = data.gratitude_3 || '';
+        document.getElementById('walk').value = data.walk_with_god || '';
+        document.getElementById('relationship').value = data.relationship_note || '';
+        document.getElementById('needs').value = data.prayer_needs || '';
+        document.getElementById('submit-btn').textContent = 'Update this week\'s check in';
+      }
+    }
+
+    // Every question on the check-in form, in the order it's asked, with the
+    // exact label to show and how to pull + render that answer from a row.
+    const REVIEW_QUESTIONS = [
+      {
+        label: "Three things you're thankful for this week",
+        render(entry) {
+          const items = [entry.gratitude_1, entry.gratitude_2, entry.gratitude_3].filter(Boolean);
+          if (!items.length) return '<p class="waiting-note">No answer given.</p>';
+          return `<ol class="gratitude-list">${items.map(g => `<li>${esc(g)}</li>`).join('')}</ol>`;
+        },
+      },
+      {
+        label: "How's your walk with God been this week?",
+        render: entry => entry.walk_with_god
+          ? `<p style="margin:0; white-space:pre-wrap;">${esc(entry.walk_with_god)}</p>`
+          : '<p class="waiting-note">No answer given.</p>',
+      },
+      {
+        label: 'How are we doing as a couple?',
+        render: entry => entry.relationship_note
+          ? `<p style="margin:0; white-space:pre-wrap;">${esc(entry.relationship_note)}</p>`
+          : '<p class="waiting-note">No answer given.</p>',
+      },
+      {
+        label: 'Any prayer needs?',
+        render: entry => entry.prayer_needs
+          ? `<p style="margin:0; white-space:pre-wrap;">${esc(entry.prayer_needs)}</p>`
+          : '<p class="waiting-note">No answer given.</p>',
+      },
+    ];
+
+    function sortEntriesByName(entries) {
+      return [...entries].sort((a, b) => {
+        const nameA = profileMap[a.submitted_by]?.display_name || '';
+        const nameB = profileMap[b.submitted_by]?.display_name || '';
+        return nameA.localeCompare(nameB);
+      });
+    }
+
+    function reviewHeaderHtml(entries) {
+      return sortEntriesByName(entries).map(entry => {
+        const profile = profileMap[entry.submitted_by];
+        const dateTime = new Date(entry.created_at).toLocaleString(undefined, {
+          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+        });
+        return `
+          <div class="review-person-head">
+            ${avatarHtml(profile, 48)}
+            <div>
+              <div style="font-weight:700;">${esc(profile?.display_name || 'Someone')}</div>
+              <div class="week-meta">Submitted ${esc(dateTime)}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function reviewQuestionsHtml(entries) {
+      const ordered = sortEntriesByName(entries);
+      return REVIEW_QUESTIONS.map(q => `
+        <div class="review-question">
+          <h3>${esc(q.label)}</h3>
+          <div class="review-columns">
+            ${ordered.map(entry => `
+              <div class="review-answer">
+                <div class="review-answer-name">${esc(profileMap[entry.submitted_by]?.display_name || 'Someone')}</div>
+                ${q.render(entry)}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function weekCard(weekStart, entries, bothComplete, isCurrent) {
+      const div = document.createElement('div');
+      div.className = `card review-card${isCurrent ? ' is-current' : ''}`;
+
+      if (bothComplete) {
+        div.innerHTML = `
+          <p class="eyebrow">${isCurrent ? "This week's review" : weekRangeLabel(weekStart)}</p>
+          ${isCurrent ? `<h2 style="margin-top:0.3rem;">Weekly review</h2>` : ''}
+          <div class="review-header">
+            ${reviewHeaderHtml(entries)}
+          </div>
+          ${reviewQuestionsHtml(entries)}
+        `;
+      } else {
+        const submittedIds = new Set(entries.map(e => e.submitted_by));
+        const waitingOn = (profilesData || []).filter(p => !submittedIds.has(p.id));
+        const iSubmitted = submittedIds.has(currentUserId);
+        const waitingNames = waitingOn.map(p => p.display_name).join(' and ') || 'the other person';
+        div.innerHTML = `
+          <p class="eyebrow">${weekRangeLabel(weekStart)}</p>
+          <div class="person-row" style="margin-top:0.5rem; flex-wrap:wrap; gap:0.75rem;">
+            ${entries.map(e => `
+              <span class="status-pill done">${avatarHtml(profileMap[e.submitted_by], 20)} ${esc(profileMap[e.submitted_by]?.display_name || 'Someone')}</span>
+            `).join('')}
+            ${waitingOn.map(p => `
+              <span class="status-pill">${avatarHtml(profileMap[p.id], 20)} ${esc(p.display_name)}</span>
+            `).join('')}
+          </div>
+          <p class="waiting-note">
+            ${iSubmitted
+              ? `Your answers are in. Once ${esc(waitingNames)} checks in, you'll both see the full review together.`
+              : `${esc(waitingNames)} checked in already. Submit yours above to unlock this week's review together.`}
+          </p>
+        `;
+      }
+      return div;
+    }
+
+    function updateStatusLine(started, bothComplete) {
+      const el = document.getElementById('status-line');
+      if (bothComplete) {
+        el.textContent = "You've both checked in this week — see your weekly review below.";
+      } else if (started) {
+        el.textContent = "Waiting on the other check-in to unlock this week's review.";
+      } else {
+        el.textContent = '';
+      }
+    }
+
+    async function loadHistory() {
+      const { data } = await supabase
+        .from('checkins')
+        .select('*')
+        .order('week_start', { ascending: false })
+        .order('created_at', { ascending: true });
+      const el = document.getElementById('history');
+      el.innerHTML = '';
+
+      // Group by week, keeping only the latest row per person within that week
+      // (defensive in case any duplicate submissions exist from before this feature).
+      const weeks = new Map();
+      (data || []).forEach(c => {
+        if (!weeks.has(c.week_start)) weeks.set(c.week_start, new Map());
+        weeks.get(c.week_start).set(c.submitted_by, c);
+      });
+
+      const weekStarts = Array.from(weeks.keys()).sort((a, b) => b.localeCompare(a));
+
+      if (!weekStarts.length) {
+        el.innerHTML = '<p style="color:var(--ink-soft);">No check-ins yet. Be the first to start this week\'s conversation.</p>';
+        updateStatusLine(false, false);
+        return;
+      }
+
+      weekStarts.forEach(ws => {
+        const entriesMap = weeks.get(ws);
+        const entries = Array.from(entriesMap.values());
+        const bothComplete = totalPeople > 0 && entriesMap.size >= totalPeople;
+        el.appendChild(weekCard(ws, entries, bothComplete, ws === nowWeekStart));
+      });
+
+      const currentEntries = weeks.get(nowWeekStart);
+      const currentCount = currentEntries ? currentEntries.size : 0;
+      updateStatusLine(currentCount > 0, totalPeople > 0 && currentCount >= totalPeople);
+    }
+
+    document.getElementById('checkin-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        submitted_by: currentUserId,
+        week_start: nowWeekStart,
+        gratitude_1: document.getElementById('gratitude-1').value.trim(),
+        gratitude_2: document.getElementById('gratitude-2').value.trim(),
+        gratitude_3: document.getElementById('gratitude-3').value.trim(),
+        walk_with_god: document.getElementById('walk').value,
+        relationship_note: document.getElementById('relationship').value,
+        prayer_needs: document.getElementById('needs').value,
+      };
+      if (myCurrentCheckin) {
+        await supabase.from('checkins').update(payload).eq('id', myCurrentCheckin.id);
+      } else {
+        await supabase.from('checkins').insert(payload);
+      }
+      await loadForm();
+      await loadHistory();
+    });
+
+    await loadForm();
+    await loadHistory();
+  </script>
+</Layout>

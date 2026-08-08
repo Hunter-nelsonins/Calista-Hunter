@@ -1,0 +1,63 @@
+---
+import Layout from '../../layouts/Layout.astro';
+---
+<Layout title="Devotional | Walk Together">
+  <div id="content"></div>
+
+  <script type="module">
+    import { supabase } from '../../lib/supabase.js';
+
+    const id = window.location.pathname.split('/').filter(Boolean).pop();
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) window.location.href = '/login';
+
+    function esc(s) {
+      const div = document.createElement('div');
+      div.textContent = s ?? '';
+      return div.innerHTML;
+    }
+
+    const { data: devo } = await supabase.from('devotionals').select('*').eq('id', id).maybeSingle();
+    const { data: days } = await supabase.from('devotional_days').select('*').eq('devotional_id', id).order('day_number', { ascending: true });
+
+    const el = document.getElementById('content');
+    if (!devo) {
+      el.innerHTML = '<p>Not found. <a href="/devotionals">Back to devotionals</a></p>';
+    } else {
+      const totalDays = (days || []).length;
+      const devoWeekStartDate = new Date(devo.week_start + 'T00:00:00');
+      const now = new Date();
+      const hasStarted = totalDays > 0 && now >= devoWeekStartDate;
+      let startDay = 1;
+      if (hasStarted) {
+        const dayIndex = Math.floor((now - devoWeekStartDate) / 86400000) + 1;
+        startDay = Math.min(Math.max(dayIndex, 1), totalDays);
+      }
+
+      const daysHtml = (days || []).map(d => `
+        <a class="road-step" style="display:block; text-decoration:none; color:inherit;" href="/devotionals/${id}/day/${d.day_number}">
+          <div class="eyebrow">Day ${esc(d.day_number)}</div>
+          <h3 style="font-size:1.05rem; margin:0.2rem 0 0;">${esc(d.title)}</h3>
+        </a>
+      `).join('');
+
+      el.innerHTML = `
+        <p class="eyebrow">${esc(devo.week_start)} &bull; ${esc(devo.passage_ref)}</p>
+        <h1>${esc(devo.title)}</h1>
+        ${devo.theme ? `<p style="color:var(--ink-soft);">${esc(devo.theme)}</p>` : ''}
+        ${totalDays > 0 ? `
+          <a class="btn" style="margin:1.5rem 0 0.5rem;" href="/devotionals/${id}/day/${startDay}">${hasStarted ? `Continue to Day ${startDay}` : 'Begin Day 1'}</a>
+        ` : `<p style="color:var(--ink-soft); margin-top:1.5rem;">No daily entries have been added for this week yet.</p>`}
+        <div class="road" style="margin-top:2rem;">${daysHtml}</div>
+        ${devo.discussion_prompt ? `
+          <div class="card" id="discussion" style="margin-top:1rem;">
+            <h2 style="font-size:1rem;">This week's discussion</h2>
+            <p>${esc(devo.discussion_prompt)}</p>
+          </div>
+        ` : ''}
+        <p style="margin-top:2rem;"><a href="/">&larr; Back to homepage</a></p>
+      `;
+    }
+  </script>
+</Layout>

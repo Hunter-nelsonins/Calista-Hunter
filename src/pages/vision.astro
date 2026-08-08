@@ -1,0 +1,100 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Our Vision | Walk Together">
+  <p class="eyebrow">Relationship vision</p>
+  <h1>What we're building toward</h1>
+
+  <div class="card" style="margin:1.5rem 0;">
+    <h2 style="font-size:1rem;">The values we live by</h2>
+    <textarea id="values" rows="5" placeholder="What do we want our relationship to stand for?"></textarea>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h2 style="font-size:1rem;">Keeping God first</h2>
+    <textarea id="godfirst" rows="5" placeholder="What does actually keeping God first look like for us, practically?"></textarea>
+  </div>
+
+  <button id="save-btn">Save</button>
+  <span id="saved-msg" style="margin-left:0.8rem; color:var(--ink-soft); font-size:0.9rem; display:none;">Saved.</span>
+
+  <h2 style="margin-top:3rem; font-size:1rem;">History</h2>
+  <div id="history" style="display:flex; flex-direction:column; gap:1rem;"></div>
+
+  <script type="module">
+    import { supabase } from '../lib/supabase.js';
+    import { buildProfileMap, avatarHtml } from '../lib/avatars.js';
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) window.location.href = '/login';
+
+    function esc(s) {
+      const div = document.createElement('div');
+      div.textContent = s ?? '';
+      return div.innerHTML;
+    }
+
+    const { data: profData } = await supabase.from('profiles').select('id, display_name, avatar_url');
+    const profiles = await buildProfileMap(profData);
+
+    async function loadLatest() {
+      const { data } = await supabase.from('vision_entries').select('*').order('created_at', { ascending: false }).limit(1);
+      if (data && data[0]) {
+        document.getElementById('values').value = data[0].values_statement || '';
+        document.getElementById('godfirst').value = data[0].keeping_god_first || '';
+      }
+    }
+
+    async function loadHistory() {
+      const { data } = await supabase.from('vision_entries').select('*').order('created_at', { ascending: false });
+      const el = document.getElementById('history');
+      el.innerHTML = '';
+      if (!data || !data.length) {
+        el.innerHTML = '<p style="color:var(--ink-soft);">No history yet.</p>';
+        return;
+      }
+      data.forEach((entry, idx) => {
+        const div = document.createElement('div');
+        div.className = 'card';
+        const profile = profiles[entry.edited_by];
+        const date = new Date(entry.created_at).toLocaleString(undefined, {
+          month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+        });
+        div.innerHTML = `
+          <div class="person-row" style="margin-bottom:1rem;">
+            ${avatarHtml(profile, 28)}
+            <div style="font-size:0.8rem; color:var(--ink-soft);">
+              ${esc(date)} &bull; saved by ${esc(profile?.display_name || 'Someone')}
+              ${idx === 0 ? '<span class="badge" style="margin-left:0.5rem;">Current</span>' : ''}
+            </div>
+          </div>
+          <div style="margin-bottom:1rem;">
+            <p class="eyebrow" style="margin-bottom:0.3rem;">The values we live by</p>
+            <p style="margin:0; white-space:pre-wrap;">${entry.values_statement ? esc(entry.values_statement) : '<span style="color:var(--ink-soft);">Not written.</span>'}</p>
+          </div>
+          <div>
+            <p class="eyebrow" style="margin-bottom:0.3rem;">Keeping God first</p>
+            <p style="margin:0; white-space:pre-wrap;">${entry.keeping_god_first ? esc(entry.keeping_god_first) : '<span style="color:var(--ink-soft);">Not written.</span>'}</p>
+          </div>
+        `;
+        el.appendChild(div);
+      });
+    }
+
+    document.getElementById('save-btn').addEventListener('click', async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('vision_entries').insert({
+        values_statement: document.getElementById('values').value,
+        keeping_god_first: document.getElementById('godfirst').value,
+        edited_by: user.id,
+      });
+      const msg = document.getElementById('saved-msg');
+      msg.style.display = 'inline';
+      setTimeout(() => msg.style.display = 'none', 2000);
+      loadHistory();
+    });
+
+    await loadLatest();
+    await loadHistory();
+  </script>
+</Layout>

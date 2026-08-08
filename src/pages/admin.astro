@@ -1,0 +1,350 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Admin | Walk Together">
+  <div id="app" style="display:none;">
+    <p class="eyebrow">Admin</p>
+    <h1>Manage devotionals</h1>
+    <p class="home-subtitle">Add, edit, and remove weekly devotionals and their daily entries.</p>
+
+    <section class="home-section" style="margin-top:2rem;">
+      <div class="admin-section-head">
+        <h2 style="font-size:1.15rem; margin:0;">Profile pictures</h2>
+      </div>
+      <div id="avatars-list" style="display:flex; flex-direction:column; gap:0.75rem; margin-top:1rem;"></div>
+    </section>
+
+    <section class="home-section">
+      <div class="admin-section-head">
+        <h2 style="font-size:1.15rem; margin:0;">Devotional weeks</h2>
+        <button type="button" id="new-week-btn" class="btn-small">+ Add week</button>
+      </div>
+
+      <div class="card form-panel" id="week-form-panel" style="display:none; margin:1.25rem 0;">
+        <input type="hidden" id="week-id" />
+        <div class="form-row">
+          <label for="week-title">Devotional week title</label>
+          <input type="text" id="week-title" placeholder="e.g. Walking in Grace" />
+        </div>
+        <div class="form-row">
+          <label for="week-passage">Passage reference</label>
+          <input type="text" id="week-passage" placeholder="e.g. Ephesians 2:1-10" />
+        </div>
+        <div class="form-row">
+          <label for="week-theme">Theme</label>
+          <input type="text" id="week-theme" placeholder="Short theme (optional)" />
+        </div>
+        <div class="form-row">
+          <label for="week-start">Week start date</label>
+          <input type="date" id="week-start" />
+        </div>
+        <div class="form-row">
+          <label for="week-prompt">Weekly discussion prompt</label>
+          <textarea id="week-prompt" rows="3" placeholder="Optional prompt for your weekly discussion"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="save-week-btn">Save week</button>
+          <button type="button" id="cancel-week-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+
+      <div id="weeks-list" style="display:flex; flex-direction:column; gap:0.75rem; margin-top:1rem;"></div>
+    </section>
+
+    <section class="home-section">
+      <div class="admin-section-head">
+        <h2 style="font-size:1.15rem; margin:0;">Daily entries</h2>
+      </div>
+
+      <div class="form-row" style="max-width:420px; margin:1.25rem 0 1rem;">
+        <label for="day-week-select">Select a devotional week</label>
+        <select id="day-week-select"></select>
+      </div>
+
+      <button type="button" id="new-day-btn" class="btn-small" style="margin-bottom:1.25rem;">+ Add day</button>
+
+      <div class="card form-panel" id="day-form-panel" style="display:none; margin-bottom:1.25rem;">
+        <input type="hidden" id="day-id" />
+        <div class="form-row">
+          <label for="day-number">Day number</label>
+          <input type="number" id="day-number" min="1" step="1" />
+        </div>
+        <div class="form-row">
+          <label for="day-title">Daily title</label>
+          <input type="text" id="day-title" />
+        </div>
+        <div class="form-row">
+          <label for="day-explanation">Simple explanation</label>
+          <textarea id="day-explanation" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="day-application">Daily application</label>
+          <textarea id="day-application" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="day-question">Daily question</label>
+          <textarea id="day-question" rows="2" placeholder="Optional"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="save-day-btn">Save day</button>
+          <button type="button" id="cancel-day-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+
+      <div id="days-list" style="display:flex; flex-direction:column; gap:0.75rem;"></div>
+    </section>
+  </div>
+
+  <script type="module">
+    import { supabase } from '../lib/supabase.js';
+    import { buildProfileMap, avatarHtml, setAvatar } from '../lib/avatars.js';
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      window.location.href = '/login';
+    } else {
+      document.getElementById('app').style.display = 'block';
+
+      function esc(s) {
+        const div = document.createElement('div');
+        div.textContent = s ?? '';
+        return div.innerHTML;
+      }
+
+      // ---------------- Profile pictures ----------------
+      const avatarsList = document.getElementById('avatars-list');
+
+      function avatarRow(profile) {
+        const div = document.createElement('div');
+        div.className = 'card admin-row';
+        const inputId = `avatar-input-${profile.id}`;
+        div.innerHTML = `
+          <div class="person-row">
+            <span id="avatar-preview-${profile.id}">${avatarHtml(profile, 48)}</span>
+            <div style="font-weight:700;">${esc(profile.display_name)}</div>
+          </div>
+          <div class="admin-row-actions">
+            <input type="file" id="${inputId}" accept="image/*" style="display:none;" />
+            <button type="button" class="btn-small btn-secondary" data-action="choose">Change photo</button>
+          </div>
+        `;
+        const fileInput = div.querySelector(`#${inputId}`);
+        div.querySelector('[data-action="choose"]').addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', async () => {
+          const file = fileInput.files?.[0];
+          if (!file) return;
+          try {
+            await setAvatar(profile.id, file);
+            await loadAvatars();
+          } catch (err) {
+            alert(`Could not upload photo: ${err.message}`);
+          }
+        });
+        return div;
+      }
+
+      async function loadAvatars() {
+        const { data } = await supabase.from('profiles').select('id, display_name, avatar_url').order('display_name');
+        const profileMap = await buildProfileMap(data);
+        avatarsList.innerHTML = '';
+        (data || []).forEach(p => avatarsList.appendChild(avatarRow(profileMap[p.id] ? { ...profileMap[p.id], id: p.id } : p)));
+      }
+
+      let weeks = [];
+      let currentDays = [];
+      let selectedWeekId = null;
+
+      // ---------------- Weeks ----------------
+      const weekFormPanel = document.getElementById('week-form-panel');
+      const weeksList = document.getElementById('weeks-list');
+
+      function openWeekForm(week) {
+        document.getElementById('week-id').value = week?.id || '';
+        document.getElementById('week-title').value = week?.title || '';
+        document.getElementById('week-passage').value = week?.passage_ref || '';
+        document.getElementById('week-theme').value = week?.theme || '';
+        document.getElementById('week-start').value = week?.week_start || '';
+        document.getElementById('week-prompt').value = week?.discussion_prompt || '';
+        weekFormPanel.style.display = 'flex';
+        weekFormPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      function closeWeekForm() {
+        weekFormPanel.style.display = 'none';
+      }
+
+      document.getElementById('new-week-btn').addEventListener('click', () => openWeekForm(null));
+      document.getElementById('cancel-week-btn').addEventListener('click', closeWeekForm);
+
+      document.getElementById('save-week-btn').addEventListener('click', async () => {
+        const id = document.getElementById('week-id').value;
+        const payload = {
+          title: document.getElementById('week-title').value.trim(),
+          passage_ref: document.getElementById('week-passage').value.trim(),
+          theme: document.getElementById('week-theme').value.trim() || null,
+          week_start: document.getElementById('week-start').value,
+          discussion_prompt: document.getElementById('week-prompt').value.trim() || null,
+        };
+        if (!payload.title || !payload.passage_ref || !payload.week_start) {
+          alert('Title, passage reference, and week start date are required.');
+          return;
+        }
+        if (id) {
+          await supabase.from('devotionals').update(payload).eq('id', id);
+        } else {
+          await supabase.from('devotionals').insert(payload);
+        }
+        closeWeekForm();
+        await loadWeeks();
+      });
+
+      function weekRow(w) {
+        const div = document.createElement('div');
+        div.className = 'card admin-row';
+        div.innerHTML = `
+          <div>
+            <div class="eyebrow">${esc(w.week_start)} &bull; ${esc(w.passage_ref)}</div>
+            <h3 style="margin:0.25rem 0; font-size:1.05rem;">${esc(w.title)}</h3>
+            ${w.theme ? `<p class="card-meta" style="margin:0;">${esc(w.theme)}</p>` : ''}
+          </div>
+          <div class="admin-row-actions">
+            <button type="button" class="btn-small btn-secondary" data-action="edit">Edit</button>
+            <button type="button" class="btn-small btn-danger" data-action="delete">Delete</button>
+          </div>
+        `;
+        div.querySelector('[data-action="edit"]').addEventListener('click', () => openWeekForm(w));
+        div.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+          if (!confirm(`Delete "${w.title}" and all of its daily entries? This can't be undone.`)) return;
+          await supabase.from('devotionals').delete().eq('id', w.id);
+          await loadWeeks();
+        });
+        return div;
+      }
+
+      async function loadWeeks() {
+        const { data } = await supabase.from('devotionals').select('*').order('week_start', { ascending: false });
+        weeks = data || [];
+        weeksList.innerHTML = '';
+        if (!weeks.length) {
+          weeksList.innerHTML = '<p style="color:var(--ink-soft);">No devotional weeks yet. Add one above.</p>';
+        } else {
+          weeks.forEach(w => weeksList.appendChild(weekRow(w)));
+        }
+        populateWeekSelect();
+      }
+
+      // ---------------- Days ----------------
+      const dayFormPanel = document.getElementById('day-form-panel');
+      const daysList = document.getElementById('days-list');
+      const daySelect = document.getElementById('day-week-select');
+
+      function populateWeekSelect() {
+        const prevValue = daySelect.value;
+        if (!weeks.length) {
+          daySelect.innerHTML = '<option value="">No weeks yet</option>';
+          selectedWeekId = null;
+        } else {
+          daySelect.innerHTML = weeks.map(w => `<option value="${w.id}">${esc(w.week_start)} &mdash; ${esc(w.title)}</option>`).join('');
+          selectedWeekId = weeks.some(w => w.id === prevValue) ? prevValue : weeks[0].id;
+          daySelect.value = selectedWeekId;
+        }
+        loadDays();
+      }
+
+      daySelect.addEventListener('change', () => {
+        selectedWeekId = daySelect.value || null;
+        closeDayForm();
+        loadDays();
+      });
+
+      function openDayForm(day) {
+        if (!selectedWeekId) {
+          alert('Add a devotional week first.');
+          return;
+        }
+        document.getElementById('day-id').value = day?.id || '';
+        document.getElementById('day-number').value = day?.day_number || (currentDays.length + 1);
+        document.getElementById('day-title').value = day?.title || '';
+        document.getElementById('day-explanation').value = day?.simple_explanation || '';
+        document.getElementById('day-application').value = day?.daily_application || '';
+        document.getElementById('day-question').value = day?.daily_question || '';
+        dayFormPanel.style.display = 'flex';
+        dayFormPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      function closeDayForm() {
+        dayFormPanel.style.display = 'none';
+      }
+
+      document.getElementById('new-day-btn').addEventListener('click', () => openDayForm(null));
+      document.getElementById('cancel-day-btn').addEventListener('click', closeDayForm);
+
+      document.getElementById('save-day-btn').addEventListener('click', async () => {
+        if (!selectedWeekId) return;
+        const id = document.getElementById('day-id').value;
+        const payload = {
+          devotional_id: selectedWeekId,
+          day_number: parseInt(document.getElementById('day-number').value, 10),
+          title: document.getElementById('day-title').value.trim(),
+          simple_explanation: document.getElementById('day-explanation').value.trim(),
+          daily_application: document.getElementById('day-application').value.trim(),
+          daily_question: document.getElementById('day-question').value.trim() || null,
+        };
+        if (!payload.day_number || !payload.title || !payload.simple_explanation || !payload.daily_application) {
+          alert('Day number, title, simple explanation, and daily application are required.');
+          return;
+        }
+        if (id) {
+          await supabase.from('devotional_days').update(payload).eq('id', id);
+        } else {
+          await supabase.from('devotional_days').insert(payload);
+        }
+        closeDayForm();
+        await loadDays();
+      });
+
+      function dayRow(d) {
+        const div = document.createElement('div');
+        div.className = 'card admin-row';
+        div.innerHTML = `
+          <div>
+            <div class="eyebrow">Day ${esc(d.day_number)}</div>
+            <h3 style="margin:0.25rem 0; font-size:1.05rem;">${esc(d.title)}</h3>
+          </div>
+          <div class="admin-row-actions">
+            <button type="button" class="btn-small btn-secondary" data-action="edit">Edit</button>
+            <button type="button" class="btn-small btn-danger" data-action="delete">Delete</button>
+          </div>
+        `;
+        div.querySelector('[data-action="edit"]').addEventListener('click', () => openDayForm(d));
+        div.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+          if (!confirm(`Delete day ${d.day_number} - "${d.title}"?`)) return;
+          await supabase.from('devotional_days').delete().eq('id', d.id);
+          await loadDays();
+        });
+        return div;
+      }
+
+      async function loadDays() {
+        daysList.innerHTML = '';
+        if (!selectedWeekId) {
+          currentDays = [];
+          daysList.innerHTML = '<p style="color:var(--ink-soft);">Add a devotional week first.</p>';
+          return;
+        }
+        const { data } = await supabase
+          .from('devotional_days')
+          .select('*')
+          .eq('devotional_id', selectedWeekId)
+          .order('day_number', { ascending: true });
+        currentDays = data || [];
+        if (!currentDays.length) {
+          daysList.innerHTML = '<p style="color:var(--ink-soft);">No daily entries for this week yet.</p>';
+        } else {
+          currentDays.forEach(d => daysList.appendChild(dayRow(d)));
+        }
+      }
+
+      await loadAvatars();
+      await loadWeeks();
+    }
+  </script>
+</Layout>

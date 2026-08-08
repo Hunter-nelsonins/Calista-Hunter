@@ -1,0 +1,253 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Walk Together">
+  <div id="app" style="display:none;">
+    <div class="home-header">
+      <p class="eyebrow" id="today-label"></p>
+      <h1 id="greeting">Good morning.</h1>
+      <p class="home-subtitle" id="week-context"></p>
+      <div class="home-people" id="home-people"></div>
+    </div>
+
+    <section class="verse-hero" aria-label="Verse of the day">
+      <p class="eyebrow">Verse of the day</p>
+      <p class="verse-text" id="verse-text">Loading&hellip;</p>
+      <p class="verse-ref" id="verse-ref"></p>
+    </section>
+
+    <section class="home-section">
+      <div class="card card-lg" id="devotional-card">
+        <div class="card-head">
+          <p class="eyebrow">This week's devotional</p>
+          <span class="badge" id="devo-progress" style="display:none;"></span>
+        </div>
+        <div id="devo-body">Loading&hellip;</div>
+      </div>
+    </section>
+
+    <section class="home-grid">
+      <div class="card" id="checkin-card">
+        <p class="eyebrow">Weekly check-in</p>
+        <div id="checkin-body">Loading&hellip;</div>
+      </div>
+      <div class="card" id="prayers-card">
+        <div class="card-head">
+          <p class="eyebrow">Active prayers</p>
+          <span class="badge" id="prayers-count" style="display:none;"></span>
+        </div>
+        <div id="prayers-body">Loading&hellip;</div>
+      </div>
+    </section>
+
+    <section class="home-section">
+      <div class="card" id="vision-card">
+        <p class="eyebrow">Our vision</p>
+        <div id="vision-body">Loading&hellip;</div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module">
+    import { supabase } from '../lib/supabase.js';
+    import { getVerseOfTheDay } from '../lib/bible.js';
+    import { buildProfileMap, avatarHtml } from '../lib/avatars.js';
+
+    function esc(s) {
+      const div = document.createElement('div');
+      div.textContent = s ?? '';
+      return div.innerHTML;
+    }
+
+    function mondayOf(date) {
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      return new Date(d.setDate(diff)).toISOString().slice(0, 10);
+    }
+
+    // Date-driven devotional selection: prefer the devotional whose 7-day
+    // week actually contains today; otherwise the most recent one that's
+    // already started; otherwise (we're before the very first devotional)
+    // the earliest upcoming one. Never just "the latest row added".
+    function pickCurrentDevotional(devotionals, todayStr) {
+      if (!devotionals || !devotionals.length) return null;
+      const sorted = [...devotionals].sort((a, b) => a.week_start.localeCompare(b.week_start));
+      const exact = sorted.find(d => {
+        const end = new Date(d.week_start + 'T00:00:00');
+        end.setDate(end.getDate() + 6);
+        return todayStr >= d.week_start && todayStr <= end.toISOString().slice(0, 10);
+      });
+      if (exact) return exact;
+      const mostRecentPast = [...sorted].reverse().find(d => d.week_start <= todayStr);
+      return mostRecentPast || sorted[0];
+    }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      window.location.href = '/login';
+    } else {
+      document.getElementById('app').style.display = 'block';
+
+      const now = new Date();
+      document.getElementById('today-label').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+
+      const hour = now.getHours();
+      document.getElementById('greeting').textContent =
+        hour < 12 ? 'Good morning.' : hour < 18 ? 'Good afternoon.' : 'Good evening.';
+
+      const weekStart = mondayOf(now);
+      const weekStartDate = new Date(weekStart + 'T00:00:00');
+      document.getElementById('week-context').textContent =
+        `Week of ${weekStartDate.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`;
+
+      // Verse of the day (loads independently, doesn't block the rest)
+      getVerseOfTheDay().then(verse => {
+        document.getElementById('verse-text').textContent = verse.text;
+        document.getElementById('verse-ref').textContent = verse.reference;
+      });
+
+      const todayStr = now.toISOString().slice(0, 10);
+      const [{ data: profiles }, { data: allDevotionals }] = await Promise.all([
+        supabase.from('profiles').select('id, display_name, avatar_url'),
+        supabase.from('devotionals').select('*'),
+      ]);
+      const devo = pickCurrentDevotional(allDevotionals, todayStr);
+      const profileMap = await buildProfileMap(profiles);
+
+      // ---- The two of you ----
+      document.getElementById('home-people').innerHTML = (profiles || []).map(p => `
+        <span class="home-person">${avatarHtml(profileMap[p.id], 40)} ${esc(p.display_name)}</span>
+      `).join('');
+
+      // ---- This week's devotional ----
+      const devoBody = document.getElementById('devo-body');
+      const devoProgress = document.getElementById('devo-progress');
+      if (devo) {
+        const { data: days } = await supabase
+          .from('devotional_days')
+          .select('day_number')
+          .eq('devotional_id', devo.id)
+          .order('day_number', { ascending: true });
+        const totalDays = (days || []).length;
+        const devoWeekStartDate = new Date(devo.week_start + 'T00:00:00');
+        const hasStarted = totalDays > 0 && now >= devoWeekStartDate;
+        let currentDay = 1;
+        if (hasStarted) {
+          const dayIndex = Math.floor((now - devoWeekStartDate) / 86400000) + 1;
+          currentDay = Math.min(Math.max(dayIndex, 1), totalDays);
+          devoProgress.textContent = `Day ${currentDay} of ${totalDays}`;
+          devoProgress.style.display = 'inline-block';
+        } else if (totalDays > 0) {
+          devoProgress.textContent = `Starts ${devoWeekStartDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+          devoProgress.style.display = 'inline-block';
+        }
+        devoBody.innerHTML = `
+          <p class="eyebrow" style="margin-top:0.5rem;">${esc(devo.week_start)}</p>
+          <h2 style="margin-top:0.3rem;">${esc(devo.title)}</h2>
+          <p class="devo-meta">${esc(devo.passage_ref)}${devo.theme ? ' &bull; ' + esc(devo.theme) : ''}</p>
+          <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+            ${totalDays > 0
+              ? `<a class="btn" href="/devotionals/${devo.id}/day/${currentDay}">${hasStarted ? `Continue Day ${currentDay}` : 'Begin Day 1'}</a>`
+              : ''}
+            <a class="btn btn-secondary" href="/devotionals/${devo.id}">View full week</a>
+          </div>
+        `;
+      } else {
+        devoBody.innerHTML = `
+          <p style="color:var(--ink-soft); margin-top:0.5rem;">No devotional has been added yet.</p>
+          <a class="btn" href="/devotionals">View past devotionals</a>
+        `;
+      }
+
+      // ---- Weekly check-in ----
+      const checkinBody = document.getElementById('checkin-body');
+      const [{ data: recentCheckins }, { data: weekCheckins }] = await Promise.all([
+        supabase.from('checkins').select('*').order('created_at', { ascending: false }).limit(1),
+        supabase.from('checkins').select('submitted_by').eq('week_start', weekStart),
+      ]);
+      const submittedIds = new Set((weekCheckins || []).map(c => c.submitted_by));
+      const completionHtml = (profiles || []).map(p => `
+        <span class="checkin-pill ${submittedIds.has(p.id) ? 'done' : ''}">${avatarHtml(profileMap[p.id], 18)} ${esc(p.display_name)}</span>
+      `).join('');
+      const bothDone = (profiles || []).length > 0 && (profiles || []).every(p => submittedIds.has(p.id));
+
+      if (bothDone) {
+        checkinBody.innerHTML = `
+          <p style="color:var(--ink-soft);">You've both checked in this week &mdash; your weekly review is ready.</p>
+          <div class="checkin-pills">${completionHtml}</div>
+          <a class="btn btn-secondary" href="/checkins">Open weekly review</a>
+        `;
+      } else if (recentCheckins && recentCheckins[0]) {
+        const c = recentCheckins[0];
+        const date = new Date(c.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        checkinBody.innerHTML = `
+          <p class="checkin-summary">${avatarHtml(profileMap[c.submitted_by], 22)} ${esc(profileMap[c.submitted_by]?.display_name || 'Someone')} checked in on ${esc(date)}.</p>
+          <div class="checkin-pills">${completionHtml}</div>
+          <a class="btn btn-secondary" href="/checkins">Open check-in</a>
+        `;
+      } else {
+        checkinBody.innerHTML = `
+          <p style="color:var(--ink-soft);">No check-ins yet this week.</p>
+          <div class="checkin-pills">${completionHtml}</div>
+          <a class="btn btn-secondary" href="/checkins">Start this week's check-in</a>
+        `;
+      }
+
+      // ---- Active prayers ----
+      const prayersBody = document.getElementById('prayers-body');
+      const prayersCountBadge = document.getElementById('prayers-count');
+      const { data: activePrayers, count } = await supabase
+        .from('prayers')
+        .select('*', { count: 'exact' })
+        .eq('is_answered', false)
+        .order('created_at', { ascending: false })
+        .limit(3);
+      if (count) {
+        prayersCountBadge.textContent = count;
+        prayersCountBadge.style.display = 'inline-block';
+      }
+      if (activePrayers && activePrayers.length) {
+        prayersBody.innerHTML = `
+          <ul class="prayer-preview-list" style="list-style:none; padding-left:0;">
+            ${activePrayers.map(p => `
+              <li class="person-row" style="margin-bottom:0.6rem;">
+                ${avatarHtml(profileMap[p.added_by], 22)}
+                <span>${esc(p.content)}</span>
+              </li>
+            `).join('')}
+          </ul>
+          <a class="btn btn-secondary" href="/prayers">View all prayers</a>
+        `;
+      } else {
+        prayersBody.innerHTML = `
+          <p style="color:var(--ink-soft);">No active prayers right now.</p>
+          <a class="btn btn-secondary" href="/prayers">Add a prayer</a>
+        `;
+      }
+
+      // ---- Our vision ----
+      const visionBody = document.getElementById('vision-body');
+      const { data: visionEntries } = await supabase
+        .from('vision_entries')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (visionEntries && visionEntries[0]) {
+        const v = visionEntries[0];
+        const rawExcerpt = v.values_statement || v.keeping_god_first || '';
+        const excerpt = rawExcerpt.length > 160 ? rawExcerpt.slice(0, 160) + '&hellip;' : rawExcerpt;
+        visionBody.innerHTML = `
+          <p style="color:var(--ink-soft);">${esc(excerpt) || 'Nothing written yet.'}</p>
+          <p class="person-row card-meta">${avatarHtml(profileMap[v.edited_by], 20)} Last updated by ${esc(profileMap[v.edited_by]?.display_name || 'Someone')}</p>
+          <a class="btn btn-secondary" href="/vision">Open our vision</a>
+        `;
+      } else {
+        visionBody.innerHTML = `
+          <p style="color:var(--ink-soft);">You haven't written your vision yet.</p>
+          <a class="btn btn-secondary" href="/vision">Start writing it together</a>
+        `;
+      }
+    }
+  </script>
+</Layout>

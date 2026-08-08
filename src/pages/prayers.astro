@@ -1,0 +1,88 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Prayers | Walk Together">
+  <p class="eyebrow">Prayer log</p>
+  <h1>Carrying it together</h1>
+
+  <form id="add-form" style="display:flex; gap:0.6rem; margin:1.5rem 0 2rem;">
+    <input type="text" id="new-prayer" placeholder="Add a prayer request..." required />
+    <button type="submit">Add</button>
+  </form>
+
+  <h2 style="font-size:1.1rem;">Open</h2>
+  <div id="open-list" style="display:flex; flex-direction:column; gap:0.75rem; margin-bottom:2.5rem;"></div>
+
+  <h2 style="font-size:1.1rem;">Answered</h2>
+  <div id="answered-list" style="display:flex; flex-direction:column; gap:0.75rem;"></div>
+
+  <script type="module">
+    import { supabase } from '../lib/supabase.js';
+    import { buildProfileMap, avatarHtml } from '../lib/avatars.js';
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) window.location.href = '/login';
+
+    function esc(s) {
+      const div = document.createElement('div');
+      div.textContent = s ?? '';
+      return div.innerHTML;
+    }
+
+    let profileMap = {};
+
+    async function loadProfiles() {
+      const { data } = await supabase.from('profiles').select('id, display_name, avatar_url');
+      profileMap = await buildProfileMap(data);
+    }
+
+    function row(p) {
+      const div = document.createElement('div');
+      div.className = 'card checkbox-row';
+      let meta = `Added by ${esc(profileMap[p.added_by]?.display_name || 'Someone')}`;
+      if (p.is_answered) meta += ` &bull; Answered by ${esc(profileMap[p.answered_by]?.display_name || 'Someone')}`;
+      div.innerHTML = `
+        <input type="checkbox" ${p.is_answered ? 'checked' : ''} data-id="${p.id}" />
+        ${avatarHtml(profileMap[p.added_by], 30)}
+        <div>
+          <div>${esc(p.content)}</div>
+          <div style="font-size:0.8rem; color:var(--ink-soft);">${meta}</div>
+        </div>
+      `;
+      div.querySelector('input').addEventListener('change', async (e) => {
+        const isChecked = e.target.checked;
+        const { data: { user } } = await supabase.auth.getUser();
+        await supabase.from('prayers').update({
+          is_answered: isChecked,
+          answered_by: isChecked ? user.id : null,
+          answered_at: isChecked ? new Date().toISOString() : null,
+        }).eq('id', p.id);
+        loadPrayers();
+      });
+      return div;
+    }
+
+    async function loadPrayers() {
+      const { data } = await supabase.from('prayers').select('*').order('created_at', { ascending: false });
+      const openList = document.getElementById('open-list');
+      const answeredList = document.getElementById('answered-list');
+      openList.innerHTML = '';
+      answeredList.innerHTML = '';
+      (data || []).forEach(p => {
+        (p.is_answered ? answeredList : openList).appendChild(row(p));
+      });
+    }
+
+    document.getElementById('add-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('new-prayer');
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('prayers').insert({ content: input.value, added_by: user.id });
+      input.value = '';
+      loadPrayers();
+    });
+
+    await loadProfiles();
+    await loadPrayers();
+  </script>
+</Layout>

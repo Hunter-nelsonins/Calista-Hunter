@@ -1,0 +1,131 @@
+---
+import Layout from '../../../../layouts/Layout.astro';
+---
+<Layout title="Devotional | Walk Together">
+  <div id="content"></div>
+
+  <script type="module">
+    import { supabase } from '../../../../lib/supabase.js';
+    import { buildProfileMap, avatarHtml } from '../../../../lib/avatars.js';
+    import { getDayPhotoUrl, setDayPhoto, removeDayPhoto } from '../../../../lib/dayPhotos.js';
+
+    const parts = window.location.pathname.split('/').filter(Boolean);
+    // ['devotionals', id, 'day', dayNumber]
+    const id = parts[1];
+    const requestedDay = parseInt(parts[3], 10);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) window.location.href = '/login';
+
+    function esc(s) {
+      const div = document.createElement('div');
+      div.textContent = s ?? '';
+      return div.innerHTML;
+    }
+
+    const [{ data: devo }, { data: days }] = await Promise.all([
+      supabase.from('devotionals').select('*').eq('id', id).maybeSingle(),
+      supabase.from('devotional_days').select('*').eq('devotional_id', id).order('day_number', { ascending: true }),
+    ]);
+
+    const el = document.getElementById('content');
+    if (!devo || !days || !days.length) {
+      el.innerHTML = '<p>Not found. <a href="/devotionals">Back to devotionals</a></p>';
+    } else {
+      const clampedDay = Math.min(Math.max(requestedDay || 1, days[0].day_number), days[days.length - 1].day_number);
+      let idx = days.findIndex(d => d.day_number === clampedDay);
+      if (idx === -1) idx = 0;
+      const day = days[idx];
+      const prevDay = idx > 0 ? days[idx - 1].day_number : null;
+      const nextDay = idx < days.length - 1 ? days[idx + 1].day_number : null;
+
+      el.innerHTML = `
+        <p class="eyebrow">${esc(devo.title)} &bull; ${esc(devo.passage_ref)}</p>
+        <p class="badge" style="margin:0.75rem 0 1.25rem; display:inline-block;">Day ${idx + 1} of ${days.length}</p>
+        <h1>${esc(day.title)}</h1>
+        <p style="font-size:1.05rem;">${esc(day.simple_explanation)}</p>
+        <div class="card" style="margin:1.5rem 0;">
+          <h2 style="font-size:1rem;">How to apply this</h2>
+          <p style="margin:0;">${esc(day.daily_application)}</p>
+        </div>
+        ${day.daily_question ? `<p style="color:var(--ink-soft); font-style:italic;">${esc(day.daily_question)}</p>` : ''}
+
+        <div class="card" style="margin:1.5rem 0;">
+          <p class="eyebrow" style="margin-bottom:0.75rem;">Our photo from today</p>
+          <div id="day-photo-body">Loading&hellip;</div>
+        </div>
+
+        <div class="day-nav">
+          ${prevDay
+            ? `<a class="btn btn-secondary" href="/devotionals/${id}/day/${prevDay}">&larr; Previous Day</a>`
+            : `<span class="day-nav-spacer"></span>`}
+          ${nextDay
+            ? `<a class="btn" href="/devotionals/${id}/day/${nextDay}">Next Day &rarr;</a>`
+            : `<a class="btn" href="/devotionals/${id}#discussion">Weekly Discussion &rarr;</a>`}
+        </div>
+        <p style="margin-top:1.5rem;"><a href="/devotionals/${id}">&larr; Back to week overview</a></p>
+      `;
+
+      await renderDayPhoto(day);
+    }
+
+    async function renderDayPhoto(day) {
+      const body = document.getElementById('day-photo-body');
+      const { data: profilesData } = await supabase.from('profiles').select('id, display_name, avatar_url');
+      const profileMap = await buildProfileMap(profilesData);
+
+      if (day.photo_url) {
+        const url = await getDayPhotoUrl(day.photo_url);
+        const uploader = profileMap[day.photo_uploaded_by];
+        const when = day.photo_uploaded_at
+          ? new Date(day.photo_uploaded_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          : '';
+        body.innerHTML = `
+          ${url ? `<img src="${url}" alt="Our photo from this day" style="width:100%; max-height:420px; object-fit:cover; border-radius:var(--radius); border:1px solid var(--line); display:block;" />` : ''}
+          <p class="person-row card-meta" style="margin-top:0.75rem;">
+            ${avatarHtml(uploader, 20)} Added by ${esc(uploader?.display_name || 'Someone')}${when ? ' &bull; ' + esc(when) : ''}
+          </p>
+          <div style="margin-top:0.6rem; display:flex; gap:0.75rem;">
+            <button type="button" id="replace-photo-btn" class="btn-small btn-secondary">Replace photo</button>
+            <button type="button" id="remove-photo-btn" class="btn-small btn-danger">Remove</button>
+          </div>
+          <input type="file" id="day-photo-input" accept="image/*" style="display:none;" />
+        `;
+      } else {
+        body.innerHTML = `
+          <p style="color:var(--ink-soft); margin:0 0 0.75rem;">Add a photo of the two of you going through today's devotional.</p>
+          <button type="button" id="add-photo-btn" class="btn-small">Add a photo</button>
+          <input type="file" id="day-photo-input" accept="image/*" style="display:none;" />
+        `;
+      }
+
+      const fileInput = document.getElementById('day-photo-input');
+      const triggerBtn = document.getElementById('add-photo-btn') || document.getElementById('replace-photo-btn');
+      triggerBtn?.addEventListener('click', () => fileInput.click());
+
+      document.getElementById('remove-photo-btn')?.addEventListener('click', async () => {
+        if (!confirm('Remove this photo?')) return;
+        await removeDayPhoto(day.id, day.photo_url);
+        day.photo_url = null;
+        day.photo_uploaded_by = null;
+        day.photo_uploaded_at = null;
+        renderDayPhoto(day);
+      });
+
+      fileInput?.addEventListener('change', async () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        const { data: { user } } = await supabase.auth.getUser();
+        try {
+          const { path, uploadedAt } = await setDayPhoto(day.id, user.id, file);
+          day.photo_url = path;
+          day.photo_uploaded_by = user.id;
+          day.photo_uploaded_at = uploadedAt;
+          renderDayPhoto(day);
+        } catch (err) {
+          alert(`Could not upload photo: ${err.message}`);
+        }
+      });
+    }
+  </script>
+</Layout>
