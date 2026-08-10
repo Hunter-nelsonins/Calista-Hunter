@@ -8,6 +8,7 @@ import Layout from '../../../../layouts/Layout.astro';
     import { supabase } from '../../../../lib/supabase.js';
     import { buildProfileMap, avatarHtml } from '../../../../lib/avatars.js';
     import { getDayPhotoUrl, setDayPhoto, removeDayPhoto } from '../../../../lib/dayPhotos.js';
+    import { getPassage } from '../../../../lib/bible.js';
 
     const parts = window.location.pathname.split('/').filter(Boolean);
     // ['devotionals', id, 'day', dayNumber]
@@ -39,16 +40,41 @@ import Layout from '../../../../layouts/Layout.astro';
       const prevDay = idx > 0 ? days[idx - 1].day_number : null;
       const nextDay = idx < days.length - 1 ? days[idx + 1].day_number : null;
 
+      let scriptureText = null;
+      if (day.scripture_ref) {
+        try {
+          const passage = await getPassage(day.scripture_ref);
+          scriptureText = passage?.text || null;
+        } catch (err) {
+          scriptureText = null;
+        }
+      }
+
       el.innerHTML = `
         <p class="eyebrow">${esc(devo.title)} &bull; ${esc(devo.passage_ref)}</p>
         <p class="badge" style="margin:0.75rem 0 1.25rem; display:inline-block;">Day ${idx + 1} of ${days.length}</p>
         <h1>${esc(day.title)}</h1>
+
+        ${day.scripture_ref ? `
+          <div class="scripture-card">
+            <p class="eyebrow">Scripture</p>
+            <p class="scripture-ref">${esc(day.scripture_ref)}</p>
+            ${scriptureText ? `<p class="scripture-text">${esc(scriptureText)}</p>` : ''}
+          </div>
+        ` : ''}
+
+        <p class="eyebrow section-label">Reflection</p>
         <p style="font-size:1.05rem;">${esc(day.simple_explanation)}</p>
-        <div class="card" style="margin:1.5rem 0;">
-          <h2 style="font-size:1rem;">How to apply this</h2>
+
+        <p class="eyebrow section-label">Apply It Today</p>
+        <div class="card" style="margin:0.5rem 0 1.5rem;">
           <p style="margin:0;">${esc(day.daily_application)}</p>
         </div>
-        ${day.daily_question ? `<p style="color:var(--ink-soft); font-style:italic;">${esc(day.daily_question)}</p>` : ''}
+
+        ${day.daily_question ? `
+          <p class="eyebrow section-label">Talk Together</p>
+          <p style="color:var(--ink-soft); font-style:italic;">${esc(day.daily_question)}</p>
+        ` : ''}
 
         <div class="card" style="margin:1.5rem 0;">
           <p class="eyebrow" style="margin-bottom:0.75rem;">Our photo from today</p>

@@ -475,6 +475,32 @@ span.avatar-fallback {
 }
 
 /* ---- Devotional day view ---- */
+.scripture-card {
+  background: var(--paper-dim);
+  border-left: 3px solid var(--dawn-gold);
+  border-radius: var(--radius);
+  padding: 1.75rem 1.75rem 1.75rem 1.5rem;
+  margin: 1.5rem 0;
+}
+.scripture-card .eyebrow { margin-bottom: 0.6rem; }
+.scripture-ref {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  color: var(--olive-deep);
+  margin: 0 0 0.9rem;
+}
+.scripture-text {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  line-height: 1.65;
+  margin: 0;
+  color: var(--ink);
+}
+
+.section-label { margin: 1.75rem 0 0.5rem; }
+.section-label:first-of-type { margin-top: 1.5rem; }
+
 .day-nav {
   display: flex;
   justify-content: space-between;

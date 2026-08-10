@@ -74,6 +74,10 @@ import Layout from '../layouts/Layout.astro';
           <input type="text" id="day-title" />
         </div>
         <div class="form-row">
+          <label for="day-scripture">Scripture passage</label>
+          <input type="text" id="day-scripture" placeholder="e.g. Luke 24:13-16" />
+        </div>
+        <div class="form-row">
           <label for="day-explanation">Simple explanation</label>
           <textarea id="day-explanation" rows="3"></textarea>
         </div>
@@ -264,6 +268,7 @@ import Layout from '../layouts/Layout.astro';
         document.getElementById('day-id').value = day?.id || '';
         document.getElementById('day-number').value = day?.day_number || (currentDays.length + 1);
         document.getElementById('day-title').value = day?.title || '';
+        document.getElementById('day-scripture').value = day?.scripture_ref || '';
         document.getElementById('day-explanation').value = day?.simple_explanation || '';
         document.getElementById('day-application').value = day?.daily_application || '';
         document.getElementById('day-question').value = day?.daily_question || '';
@@ -284,6 +289,7 @@ import Layout from '../layouts/Layout.astro';
           devotional_id: selectedWeekId,
           day_number: parseInt(document.getElementById('day-number').value, 10),
           title: document.getElementById('day-title').value.trim(),
+          scripture_ref: document.getElementById('day-scripture').value.trim() || null,
           simple_explanation: document.getElementById('day-explanation').value.trim(),
           daily_application: document.getElementById('day-application').value.trim(),
           daily_question: document.getElementById('day-question').value.trim() || null,
@@ -308,6 +314,7 @@ import Layout from '../layouts/Layout.astro';
           <div>
             <div class="eyebrow">Day ${esc(d.day_number)}</div>
             <h3 style="margin:0.25rem 0; font-size:1.05rem;">${esc(d.title)}</h3>
+            ${d.scripture_ref ? `<p class="card-meta" style="margin:0;">${esc(d.scripture_ref)}</p>` : ''}
           </div>
           <div class="admin-row-actions">
             <button type="button" class="btn-small btn-secondary" data-action="edit">Edit</button>
