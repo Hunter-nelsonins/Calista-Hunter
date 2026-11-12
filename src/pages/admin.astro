@@ -102,6 +102,7 @@ import Layout from '../layouts/Layout.astro';
   <script type="module">
     import { supabase } from '../lib/supabase.js';
     import { buildProfileMap, avatarHtml, setAvatar } from '../lib/avatars.js';
+    import { parseScriptureRef } from '../lib/bible.js';
 
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
@@ -314,7 +315,7 @@ import Layout from '../layouts/Layout.astro';
           <div>
             <div class="eyebrow">Day ${esc(d.day_number)}</div>
             <h3 style="margin:0.25rem 0; font-size:1.05rem;">${esc(d.title)}</h3>
-            ${d.scripture_ref ? `<p class="card-meta" style="margin:0;">${esc(d.scripture_ref)}</p>` : ''}
+            ${d.scripture_ref ? `<p class="card-meta" style="margin:0;">${esc(parseScriptureRef(d.scripture_ref).reference)}</p>` : ''}
           </div>
           <div class="admin-row-actions">
             <button type="button" class="btn-small btn-secondary" data-action="edit">Edit</button>

@@ -8,7 +8,7 @@ import Layout from '../../../../layouts/Layout.astro';
     import { supabase } from '../../../../lib/supabase.js';
     import { buildProfileMap, avatarHtml } from '../../../../lib/avatars.js';
     import { getDayPhotoUrl, setDayPhoto, removeDayPhoto } from '../../../../lib/dayPhotos.js';
-    import { getPassage } from '../../../../lib/bible.js';
+    import { getPassage, parseScriptureRef } from '../../../../lib/bible.js';
 
     const parts = window.location.pathname.split('/').filter(Boolean);
     // ['devotionals', id, 'day', dayNumber]
@@ -40,13 +40,25 @@ import Layout from '../../../../layouts/Layout.astro';
       const prevDay = idx > 0 ? days[idx - 1].day_number : null;
       const nextDay = idx < days.length - 1 ? days[idx + 1].day_number : null;
 
+      // scripture_ref may hold extra text (a quoted verse, "(KJV)", "Day 2:"). Look up only the
+      // clean reference; if the Bible API is unreachable, fall back to the text that was saved.
+      const parsedRef = parseScriptureRef(day.scripture_ref);
       let scriptureText = null;
-      if (day.scripture_ref) {
+      let scriptureIsFallback = false;
+      let scriptureShownRef = parsedRef.reference;
+      if (parsedRef.reference) {
         try {
           const passage = await getPassage(day.scripture_ref);
-          scriptureText = passage?.text || null;
+          if (passage?.text) {
+            scriptureText = passage.text;
+            scriptureShownRef = passage.reference || parsedRef.reference;
+          }
         } catch (err) {
           scriptureText = null;
+        }
+        if (!scriptureText && parsedRef.quote) {
+          scriptureText = parsedRef.quote;
+          scriptureIsFallback = true;
         }
       }
 
@@ -55,11 +67,12 @@ import Layout from '../../../../layouts/Layout.astro';
         <p class="badge" style="margin:0.75rem 0 1.25rem; display:inline-block;">Day ${idx + 1} of ${days.length}</p>
         <h1>${esc(day.title)}</h1>
 
-        ${day.scripture_ref ? `
+        ${parsedRef.reference ? `
           <div class="scripture-card">
             <p class="eyebrow">Scripture</p>
-            <p class="scripture-ref">${esc(day.scripture_ref)}</p>
+            <p class="scripture-ref">${esc(scriptureShownRef)}</p>
             ${scriptureText ? `<p class="scripture-text">${esc(scriptureText)}</p>` : ''}
+            ${scriptureIsFallback ? `<p class="card-meta" style="margin:0.75rem 0 0;">Saved text shown &mdash; live Bible text is unavailable right now.</p>` : ''}
           </div>
         ` : ''}
 

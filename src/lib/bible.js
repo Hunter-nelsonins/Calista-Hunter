@@ -23,9 +23,31 @@ export async function getVerseOfTheDay() {
   return { reference: data.reference, text: data.text.trim() };
 }
 
-export async function getPassage(ref) {
-  const res = await fetch(`https://bible-api.com/${encodeURIComponent(ref)}?translation=web`);
-  if (!res.ok) return null;
-  const data = await res.json();
-  return { reference: data.reference, text: data.text.trim() };
+// Saved scripture_ref values are free text, and some include the verse itself and/or a
+// translation tag, e.g.
+//   1 Corinthians 13:4-5 — "Charity suffereth long, and is kind..."
+//   Ephesians 2:10 (KJV) — "For we are his workmanship..."
+//   Day 2: Deuteronomy 30:19 — "I call heaven and earth..."
+// The Bible API only understands a bare reference, so pull that out (and keep any quoted
+// text as a fallback). Never changes what is stored - it only reads it.
+export function parseScriptureRef(raw) {
+  if (!raw) return { reference: '', quote: null };
+  const s = String(raw).trim().replace(/^Day\s*\d+\s*[:\-–—]\s*/i, '');
+  const q = s.match(/[—–-]\s*["“‘'](.+?)["”’']?\s*$/s);
+  const m = s.match(/^((?:[1-3]\s?)?[A-Za-z][A-Za-z.\s]*?\s*\d+(?:\s*:\s*\d+(?:\s*[-–]\s*\d+)?(?:\s*,\s*\d+(?:\s*[-–]\s*\d+)?)*)?)/);
+  const reference = (m ? m[1] : s.split(/\s[—–-]\s/)[0]).replace(/\s+/g, ' ').trim();
+  return { reference, quote: q ? q[1].trim() : null };
+}
+
+export async function getPassage(rawRef) {
+  const { reference } = parseScriptureRef(rawRef);
+  if (!reference) return null;
+  try {
+    const res = await fetch(`https://bible-api.com/${encodeURIComponent(reference)}?translation=web`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return { reference: data.reference, text: data.text.trim() };
+  } catch {
+    return null;
+  }
 }
