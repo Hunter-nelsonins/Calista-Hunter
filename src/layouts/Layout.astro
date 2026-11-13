@@ -9,9 +9,11 @@ const { title = 'Walk Together' } = Astro.props;
     <title>{title}</title>
   </head>
   <body>
+    <div id="local-banner" class="local-banner" style="display:none;">LOCAL TEST MODE &middot; fake data only &middot; not your real Walk Together</div>
     <nav class="topnav">
       <a class="brand" href="/">Walk Together</a>
       <a href="/devotionals">Devotionals</a>
+      <a href="/timeline">Our Timeline</a>
       <a href="/prayers">Prayers</a>
       <a href="/vision">Our Vision</a>
       <a href="/checkins">Check In</a>
@@ -26,6 +28,18 @@ const { title = 'Walk Together' } = Astro.props;
       import { supabase } from '../lib/supabase.js';
       import { avatarHtml, getAvatarUrl } from '../lib/avatars.js';
 
+      // Visible only when the site is pointed at the local fake backend (never on the real site).
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)/.test(import.meta.env.PUBLIC_SUPABASE_URL || '')) {
+        document.getElementById('local-banner').style.display = 'block';
+      }
+
+      // If a password-recovery link lands anywhere, hand off to the set-new-password page.
+      supabase.auth.onAuthStateChange((event) => {
+        if (event === 'PASSWORD_RECOVERY' && !location.pathname.startsWith('/reset-password')) {
+          window.location.href = '/reset-password';
+        }
+      });
+
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         const { data: profile } = await supabase
@@ -36,7 +50,16 @@ const { title = 'Walk Together' } = Astro.props;
         if (profile) {
           const avatarUrl = await getAvatarUrl(profile.avatar_url);
           const slot = document.getElementById('nav-avatar-slot');
-          slot.innerHTML = `<a href="/admin" class="nav-avatar" style="line-height:0;">${avatarHtml({ display_name: profile.display_name, avatarUrl }, 26)}</a>`;
+          slot.innerHTML = `<a href="/account" class="nav-avatar" title="Account settings" style="line-height:0;">${avatarHtml({ display_name: profile.display_name, avatarUrl }, 26)}</a>`;
+        }
+
+        // After a temporary-password reset, the person must choose their own password first.
+        // (The database also withholds the new features until they do.) Quietly skipped if the
+        // new account table doesn't exist yet.
+        if (!location.pathname.startsWith('/account') && !location.pathname.startsWith('/reset-password')) {
+          const { data: acct, error } = await supabase
+            .from('account_details').select('must_change_password').eq('user_id', session.user.id).maybeSingle();
+          if (!error && acct?.must_change_password) window.location.href = '/account?force=1';
         }
       }
     </script>

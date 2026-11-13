@@ -1,0 +1,8 @@
+{
+  "name": "walk-together-dev-backend",
+  "private": true,
+  "type": "module",
+  "description": "LOCAL-ONLY test backend (fake data, in-memory Postgres). Never deployed. Separate from the website's package.json so Netlify never installs it.",
+  "scripts": { "start": "node server.mjs", "test": "node --test test/" },
+  "dependencies": { "@electric-sql/pglite": "0.2.17" }
+}

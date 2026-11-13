@@ -10,6 +10,13 @@ import Layout from '../layouts/Layout.astro';
     <button type="submit">Sign in</button>
     <p id="error-msg" style="color:#a13b2b; font-size:0.9rem; display:none;"></p>
   </form>
+  <p style="margin-top:1rem; font-size:0.9rem;"><a href="#" id="forgot-link">Forgot password?</a></p>
+  <form id="forgot-form" class="card" style="max-width:360px; display:none; flex-direction:column; gap:0.9rem; margin-top:0.75rem;">
+    <label for="forgot-email" class="card-meta" style="margin:0;">Enter your email and we'll send a link to choose a new password.</label>
+    <input type="email" id="forgot-email" placeholder="Email" required />
+    <button type="submit">Send reset link</button>
+    <p id="forgot-msg" class="inline-msg ok" role="status"></p>
+  </form>
   <p style="margin-top:1.5rem; font-size:0.9rem; color:var(--ink-soft);">
     Accounts are created once in the Supabase dashboard, not through this form.
     See the README for setup steps.
@@ -20,6 +27,19 @@ import Layout from '../layouts/Layout.astro';
 
     const { data: { session } } = await supabase.auth.getSession();
     if (session) window.location.href = '/';
+
+    document.getElementById('forgot-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('forgot-form').style.display = 'flex';
+      document.getElementById('forgot-email').value = document.getElementById('email').value;
+    });
+    document.getElementById('forgot-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('forgot-msg');
+      await supabase.auth.resetPasswordForEmail(document.getElementById('forgot-email').value, { redirectTo: window.location.origin + '/reset-password' });
+      // Same message whether or not the address has an account (nothing is revealed).
+      msg.textContent = 'If that email has an account, a reset link is on its way. Check your inbox.';
+    });
 
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();

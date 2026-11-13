@@ -7,8 +7,9 @@ import Layout from '../../../../layouts/Layout.astro';
   <script type="module">
     import { supabase } from '../../../../lib/supabase.js';
     import { buildProfileMap, avatarHtml } from '../../../../lib/avatars.js';
-    import { getDayPhotoUrl, setDayPhoto, removeDayPhoto } from '../../../../lib/dayPhotos.js';
+    import { getDayPhotoUrl, setDayPhoto, removeDayPhoto, saveDayMemory } from '../../../../lib/dayPhotos.js';
     import { getPassage, parseScriptureRef } from '../../../../lib/bible.js';
+    import { loadDayAnswers, saveDraft, submitAnswer, editSubmitted, readLocalDraft, writeLocalDraft, clearLocalDraft } from '../../../../lib/answers.js';
 
     const parts = window.location.pathname.split('/').filter(Boolean);
     // ['devotionals', id, 'day', dayNumber]
@@ -17,12 +18,32 @@ import Layout from '../../../../layouts/Layout.astro';
 
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) window.location.href = '/login';
+    const me = session?.user;
 
     function esc(s) {
       const div = document.createElement('div');
       div.textContent = s ?? '';
       return div.innerHTML;
     }
+    // Turns saved text with blank-line breaks into paragraphs (safe: escaped first).
+    function paragraphs(text) {
+      return String(text || '').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
+        .map(p => `<p>${esc(p).replace(/\n/g, '<br />')}</p>`).join('');
+    }
+    function fmtDate(iso) {
+      return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    }
+
+    // Read Together is only a different way of viewing this same page.
+    const readTogetherOn = () => document.body.classList.contains('read-together');
+    function setReadTogether(on) {
+      document.body.classList.toggle('read-together', on);
+      const url = new URL(window.location.href);
+      if (on) url.searchParams.set('mode', 'read'); else url.searchParams.delete('mode');
+      history.replaceState(null, '', url);
+      window.scrollTo(0, 0);
+    }
+    if (new URLSearchParams(window.location.search).get('mode') === 'read') document.body.classList.add('read-together');
 
     const [{ data: devo }, { data: days }] = await Promise.all([
       supabase.from('devotionals').select('*').eq('id', id).maybeSingle(),
@@ -39,6 +60,8 @@ import Layout from '../../../../layouts/Layout.astro';
       const day = days[idx];
       const prevDay = idx > 0 ? days[idx - 1].day_number : null;
       const nextDay = idx < days.length - 1 ? days[idx + 1].day_number : null;
+      // The new optional columns exist only once the additive database update has been applied.
+      const hasNewColumns = 'understanding_text' in day;
 
       // scripture_ref may hold extra text (a quoted verse, "(KJV)", "Day 2:"). Look up only the
       // clean reference; if the Bible API is unreachable, fall back to the text that was saved.
@@ -62,10 +85,29 @@ import Layout from '../../../../layouts/Layout.astro';
         }
       }
 
+      // Optional supporting passage (new)
+      let supportRef = '';
+      let supportText = null;
+      if (hasNewColumns && day.supporting_scripture_ref) {
+        supportRef = parseScriptureRef(day.supporting_scripture_ref).reference;
+        try {
+          const p = await getPassage(day.supporting_scripture_ref);
+          if (p?.text) { supportText = p.text; supportRef = p.reference || supportRef; }
+        } catch { /* reference alone is still shown */ }
+      }
+
+      const nextHref = nextDay ? `/devotionals/${id}/day/${nextDay}` : `/devotionals/${id}#discussion`;
+
       el.innerHTML = `
+        <div class="rt-bar">
+          <button type="button" id="rt-exit" class="btn-small btn-secondary">&larr; Back to normal view</button>
+          <span class="card-meta" style="margin:0;">Read Together &bull; Day ${idx + 1} of ${days.length}</span>
+        </div>
+
         <p class="eyebrow">${esc(devo.title)} &bull; ${esc(devo.passage_ref)}</p>
         <p class="badge" style="margin:0.75rem 0 1.25rem; display:inline-block;">Day ${idx + 1} of ${days.length}</p>
         <h1>${esc(day.title)}</h1>
+        <div class="hide-rt" style="margin:0 0 0.5rem;"><button type="button" id="rt-enter" class="btn-small btn-secondary">Read Together mode</button></div>
 
         ${parsedRef.reference ? `
           <div class="scripture-card">
@@ -76,95 +118,275 @@ import Layout from '../../../../layouts/Layout.astro';
           </div>
         ` : ''}
 
+        ${supportRef ? `
+          <div class="scripture-card is-supporting">
+            <p class="eyebrow">Supporting Scripture</p>
+            <p class="scripture-ref">${esc(supportRef)}</p>
+            ${supportText ? `<p class="scripture-text">${esc(supportText)}</p>` : ''}
+          </div>
+        ` : ''}
+
+        ${hasNewColumns && day.understanding_text ? `
+          <p class="eyebrow section-label">Understanding the Scripture</p>
+          <div class="prose">${paragraphs(day.understanding_text)}</div>
+        ` : ''}
+
         <p class="eyebrow section-label">Reflection</p>
-        <p style="font-size:1.05rem;">${esc(day.simple_explanation)}</p>
+        <p class="rt-text" style="font-size:1.05rem;">${esc(day.simple_explanation)}</p>
+
+        ${hasNewColumns && day.expanded_reflection ? `
+          <p class="eyebrow section-label deeper-label">Going deeper</p>
+          <div class="prose">${paragraphs(day.expanded_reflection)}</div>
+        ` : ''}
 
         <p class="eyebrow section-label">Apply It Today</p>
         <div class="card" style="margin:0.5rem 0 1.5rem;">
-          <p style="margin:0;">${esc(day.daily_application)}</p>
+          <p class="rt-text" style="margin:0;">${esc(day.daily_application)}</p>
         </div>
 
         ${day.daily_question ? `
           <p class="eyebrow section-label">Talk Together</p>
-          <p style="color:var(--ink-soft); font-style:italic;">${esc(day.daily_question)}</p>
+          <p class="rt-text" style="color:var(--ink-soft); font-style:italic;">${esc(day.daily_question)}</p>
+          <div id="answers-panel" class="answer-panel"></div>
         ` : ''}
 
-        <div class="card" style="margin:1.5rem 0;">
+        <div class="card hide-rt" style="margin:1.5rem 0;" id="photo-card">
           <p class="eyebrow" style="margin-bottom:0.75rem;">Our photo from today</p>
           <div id="day-photo-body">Loading&hellip;</div>
         </div>
 
+        ${hasNewColumns && day.closing_prayer ? `
+          <div class="prayer-card">
+            <p class="eyebrow">Pray Together</p>
+            ${paragraphs(day.closing_prayer)}
+          </div>
+        ` : ''}
+
+        <div class="rt-only" style="margin:1.5rem 0;">
+          <button type="button" id="rt-done" class="btn">Done reading &mdash; back to answers &amp; photo</button>
+        </div>
+
         <div class="day-nav">
           ${prevDay
-            ? `<a class="btn btn-secondary" href="/devotionals/${id}/day/${prevDay}">&larr; Previous Day</a>`
+            ? `<a class="btn btn-secondary" data-daylink href="/devotionals/${id}/day/${prevDay}">&larr; Previous Day</a>`
             : `<span class="day-nav-spacer"></span>`}
           ${nextDay
-            ? `<a class="btn" href="/devotionals/${id}/day/${nextDay}">Next Day &rarr;</a>`
-            : `<a class="btn" href="/devotionals/${id}#discussion">Weekly Discussion &rarr;</a>`}
+            ? `<a class="btn" data-daylink href="${nextHref}">Next Day &rarr;</a>`
+            : `<a class="btn" data-daylink href="${nextHref}">Weekly Discussion &rarr;</a>`}
         </div>
-        <p style="margin-top:1.5rem;"><a href="/devotionals/${id}">&larr; Back to week overview</a></p>
+        <p class="hide-rt" style="margin-top:1.5rem;"><a href="/devotionals/${id}">&larr; Back to week overview</a></p>
       `;
 
-      await renderDayPhoto(day);
-    }
+      document.getElementById('rt-enter').addEventListener('click', () => setReadTogether(true));
+      document.getElementById('rt-exit').addEventListener('click', () => setReadTogether(false));
+      document.getElementById('rt-done').addEventListener('click', () => {
+        setReadTogether(false);
+        (document.getElementById('answers-panel') || document.getElementById('photo-card'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      // keep Read Together on when moving between days
+      el.querySelectorAll('a[data-daylink]').forEach(a => a.addEventListener('click', (e) => {
+        if (readTogetherOn() && !a.getAttribute('href').includes('#')) { e.preventDefault(); window.location.href = a.getAttribute('href') + '?mode=read'; }
+      }));
 
-    async function renderDayPhoto(day) {
-      const body = document.getElementById('day-photo-body');
       const { data: profilesData } = await supabase.from('profiles').select('id, display_name, avatar_url');
       const profileMap = await buildProfileMap(profilesData);
+      const partner = (profilesData || []).find(p => p.id !== me?.id);
+      const partnerName = partner?.display_name || 'your partner';
 
-      if (day.photo_url) {
-        const url = await getDayPhotoUrl(day.photo_url);
-        const uploader = profileMap[day.photo_uploaded_by];
-        const when = day.photo_uploaded_at
-          ? new Date(day.photo_uploaded_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-          : '';
-        body.innerHTML = `
-          ${url ? `<img src="${url}" alt="Our photo from this day" style="width:100%; max-height:420px; object-fit:cover; border-radius:var(--radius); border:1px solid var(--line); display:block;" />` : ''}
-          <p class="person-row card-meta" style="margin-top:0.75rem;">
-            ${avatarHtml(uploader, 20)} Added by ${esc(uploader?.display_name || 'Someone')}${when ? ' &bull; ' + esc(when) : ''}
-          </p>
-          <div style="margin-top:0.6rem; display:flex; gap:0.75rem;">
-            <button type="button" id="replace-photo-btn" class="btn-small btn-secondary">Replace photo</button>
-            <button type="button" id="remove-photo-btn" class="btn-small btn-danger">Remove</button>
-          </div>
-          <input type="file" id="day-photo-input" accept="image/*" style="display:none;" />
-        `;
-      } else {
-        body.innerHTML = `
-          <p style="color:var(--ink-soft); margin:0 0 0.75rem;">Add a photo of the two of you going through today's devotional.</p>
-          <button type="button" id="add-photo-btn" class="btn-small">Add a photo</button>
-          <input type="file" id="day-photo-input" accept="image/*" style="display:none;" />
-        `;
+      // ---------------- Private answers ----------------
+      if (day.daily_question) await initAnswers();
+
+      async function initAnswers() {
+        const panel = document.getElementById('answers-panel');
+        let state = await loadDayAnswers(day.id, me.id);
+        if (!state.available) { panel.remove(); return; } // new feature not enabled yet
+        let editing = false;
+        let dirty = false;
+        let saveTimer = null;
+
+        const nameOf = uid => esc(profileMap[uid]?.display_name || (uid === me.id ? 'You' : partnerName));
+        const personHead = uid => `<div class="review-person-head">${avatarHtml(profileMap[uid], 32)}<div class="review-answer-name" style="margin:0;">${uid === me.id ? 'Your answer' : nameOf(uid)}</div></div>`;
+        const answerBlock = (row) => `
+          <div class="review-person">
+            ${personHead(row.user_id)}
+            <p class="answer-text rt-text">${esc(row.answer_text)}${row.edited_at ? `<span class="edited-tag">edited ${esc(fmtDate(row.edited_at))}</span>` : ''}</p>
+          </div>`;
+
+        function render() {
+          const { mine, theirs } = state;
+          if (mine && mine.status === 'submitted' && !editing) {
+            panel.innerHTML = theirs
+              ? `<div class="answer-note ok" role="status">Both answers are ready to read.</div>
+                 <div class="review-columns" style="margin-top:1rem;">${answerBlock(mine)}${answerBlock(theirs)}</div>
+                 <div class="answer-actions"><button type="button" id="edit-answer" class="btn-small btn-secondary">Edit my answer</button></div>`
+              : `<div class="answer-note ok" role="status">Your answer has been saved.</div>
+                 <div class="answer-note wait" role="status">Waiting for ${esc(partnerName)} to answer.</div>
+                 <div class="review-columns" style="grid-template-columns:1fr; margin-top:1rem;">${answerBlock(mine)}</div>
+                 <div class="answer-actions"><button type="button" id="edit-answer" class="btn-small btn-secondary">Edit my answer</button></div>`;
+            document.getElementById('edit-answer').addEventListener('click', () => { editing = true; render(); });
+            return;
+          }
+          // draft / not started / editing a submitted answer
+          const isEdit = mine && mine.status === 'submitted';
+          const local = readLocalDraft(me.id, day.id);
+          let initial = mine?.answer_text || '';
+          let restored = false;
+          if (!isEdit && local?.text && local.text !== initial && (!mine || local.savedAt > new Date(mine.updated_at).getTime())) { initial = local.text; restored = true; }
+          panel.innerHTML = `
+            <label for="answer-input" class="eyebrow" style="display:block; margin-bottom:0.4rem;">${isEdit ? 'Edit your answer' : 'Your private answer'}</label>
+            <textarea id="answer-input" maxlength="20000" placeholder="Write your answer here&hellip;">${esc(initial)}</textarea>
+            <div class="answer-actions">
+              ${isEdit
+                ? `<button type="button" id="save-edit" class="btn-small">Save edit</button><button type="button" id="cancel-edit" class="btn-small btn-secondary">Cancel</button>`
+                : `<button type="button" id="save-draft" class="btn-small btn-secondary">Save draft</button><button type="button" id="submit-answer" class="btn-small">Submit answer</button>`}
+            </div>
+            <div id="answer-status" class="answer-note" role="status">${
+              isEdit ? 'Your earlier version is kept, and this answer will be marked as edited.'
+              : restored ? 'Restored words you typed earlier on this device. Not saved yet.'
+              : mine ? 'Draft saved. Only you can see it.' : `Your answer stays private until ${esc(partnerName)} has submitted too.`}</div>`;
+          const input = document.getElementById('answer-input');
+          const status = document.getElementById('answer-status');
+          const setStatus = (msg, cls = '') => { status.className = 'answer-note ' + cls; status.textContent = msg; };
+          dirty = restored;
+
+          const persistDraft = async () => {
+            if (isEdit) return;
+            const text = input.value;
+            try {
+              setStatus('Saving draft…');
+              state.mine = await saveDraft(day.id, me.id, text, state.mine);
+              clearLocalDraft(me.id, day.id); dirty = false;
+              setStatus('Draft saved. Only you can see it.', 'ok');
+            } catch (err) {
+              setStatus('Could not save just now. Your words are kept on this device; try again in a moment.', 'wait');
+            }
+          };
+          if (!isEdit) {
+            input.addEventListener('input', () => {
+              dirty = true; writeLocalDraft(me.id, day.id, input.value);
+              clearTimeout(saveTimer); saveTimer = setTimeout(() => { if (input.value.trim() || state.mine) persistDraft(); }, 1500);
+            });
+            document.getElementById('save-draft').addEventListener('click', () => { clearTimeout(saveTimer); persistDraft(); });
+            document.getElementById('submit-answer').addEventListener('click', async () => {
+              clearTimeout(saveTimer);
+              try {
+                state.mine = await submitAnswer(day.id, me.id, input.value, state.mine);
+                clearLocalDraft(me.id, day.id); dirty = false;
+                state = await loadDayAnswers(day.id, me.id); render();
+              } catch (err) { setStatus(err.message || 'Could not submit. Please try again.', 'wait'); }
+            });
+          } else {
+            document.getElementById('cancel-edit').addEventListener('click', () => { editing = false; render(); });
+            document.getElementById('save-edit').addEventListener('click', async () => {
+              try {
+                state.mine = await editSubmitted(state.mine, input.value);
+                editing = false; state = await loadDayAnswers(day.id, me.id); render();
+              } catch (err) { setStatus(err.message || 'Could not save the edit.', 'wait'); }
+            });
+          }
+        }
+        render();
+        window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+        // coming back to the tab while waiting: check whether the other answer is now ready
+        document.addEventListener('visibilitychange', async () => {
+          if (document.visibilityState === 'visible' && state.mine?.status === 'submitted' && !state.theirs && !editing) {
+            state = await loadDayAnswers(day.id, me.id); render();
+          }
+        });
       }
 
-      const fileInput = document.getElementById('day-photo-input');
-      const triggerBtn = document.getElementById('add-photo-btn') || document.getElementById('replace-photo-btn');
-      triggerBtn?.addEventListener('click', () => fileInput.click());
+      await renderDayPhoto(day);
 
-      document.getElementById('remove-photo-btn')?.addEventListener('click', async () => {
-        if (!confirm('Remove this photo?')) return;
-        await removeDayPhoto(day.id, day.photo_url);
-        day.photo_url = null;
-        day.photo_uploaded_by = null;
-        day.photo_uploaded_at = null;
-        renderDayPhoto(day);
-      });
+      // ---------------- Photo (existing feature) + optional caption / shared memory (new) ----------------
+      async function renderDayPhoto(day) {
+        const body = document.getElementById('day-photo-body');
 
-      fileInput?.addEventListener('change', async () => {
-        const file = fileInput.files?.[0];
-        if (!file) return;
-        const { data: { user } } = await supabase.auth.getUser();
-        try {
-          const { path, uploadedAt } = await setDayPhoto(day.id, user.id, file);
-          day.photo_url = path;
-          day.photo_uploaded_by = user.id;
-          day.photo_uploaded_at = uploadedAt;
-          renderDayPhoto(day);
-        } catch (err) {
-          alert(`Could not upload photo: ${err.message}`);
+        const memoryHtml = hasNewColumns ? `
+          <div class="caption-row">
+            ${day.photo_url ? `<label class="card-meta" for="photo-caption">Caption (optional)</label>
+              <input type="text" id="photo-caption" maxlength="200" value="${esc(day.photo_caption || '')}" placeholder="Where was this? What do you want to remember?" />` : ''}
+            <label class="card-meta" for="shared-memory">A memory from today (optional)</label>
+            <textarea id="shared-memory" rows="3" maxlength="3000" placeholder="Anything you want to remember about this day together">${esc(day.shared_memory || '')}</textarea>
+            <div class="answer-actions"><button type="button" id="save-memory-btn" class="btn-small btn-secondary">Save memory</button><span id="memory-msg" class="inline-msg" role="status"></span></div>
+          </div>` : '';
+
+        if (day.photo_url) {
+          const url = await getDayPhotoUrl(day.photo_url);
+          const uploader = profileMap[day.photo_uploaded_by];
+          const when = day.photo_uploaded_at
+            ? new Date(day.photo_uploaded_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : '';
+          body.innerHTML = `
+            ${url ? `<img src="${url}" alt="Our photo from this day" style="width:100%; max-height:420px; object-fit:cover; border-radius:var(--radius); border:1px solid var(--line); display:block;" />` : ''}
+            <p class="person-row card-meta" style="margin-top:0.75rem;">
+              ${avatarHtml(uploader, 20)} Added by ${esc(uploader?.display_name || 'Someone')}${when ? ' &bull; ' + esc(when) : ''}
+            </p>
+            <div style="margin-top:0.6rem; display:flex; gap:0.75rem;">
+              <button type="button" id="replace-photo-btn" class="btn-small btn-secondary">Replace photo</button>
+              <button type="button" id="remove-photo-btn" class="btn-small btn-danger">Remove</button>
+            </div>
+            <input type="file" id="day-photo-input" accept="image/*,.heic,.heif" style="display:none;" />
+            <p id="photo-msg" class="inline-msg error" role="alert"></p>
+            ${memoryHtml}
+          `;
+        } else {
+          body.innerHTML = `
+            <div class="empty-state">
+              <p style="margin:0 0 0.4rem; font-family:var(--font-display); font-size:1.15rem; color:var(--ink);">Add a memory from today.</p>
+              <p style="margin:0 0 0.9rem;">Add a photo of the two of you going through today's devotional.</p>
+              <button type="button" id="add-photo-btn" class="btn-small">Add a photo</button>
+            </div>
+            <input type="file" id="day-photo-input" accept="image/*,.heic,.heif" style="display:none;" />
+            <p id="photo-msg" class="inline-msg error" role="alert"></p>
+            ${memoryHtml}
+          `;
         }
-      });
+
+        const fileInput = document.getElementById('day-photo-input');
+        const triggerBtn = document.getElementById('add-photo-btn') || document.getElementById('replace-photo-btn');
+        const photoMsg = document.getElementById('photo-msg');
+        triggerBtn?.addEventListener('click', () => {
+          if (triggerBtn.id === 'replace-photo-btn' && !confirm('Replace this photo? The current photo will stop showing here, but its file is kept safely in storage.')) return;
+          fileInput.click();
+        });
+
+        document.getElementById('remove-photo-btn')?.addEventListener('click', async () => {
+          if (!confirm('Remove this photo from the day? The picture file itself is kept safely in storage.')) return;
+          try {
+            await removeDayPhoto(day.id);
+            day.photo_url = null; day.photo_uploaded_by = null; day.photo_uploaded_at = null;
+            renderDayPhoto(day);
+          } catch (err) { photoMsg.textContent = `Could not remove the photo: ${err.message}`; }
+        });
+
+        fileInput?.addEventListener('change', async () => {
+          const file = fileInput.files?.[0];
+          if (!file) return;
+          photoMsg.textContent = '';
+          if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Uploading…'; }
+          try {
+            const { path, uploadedAt } = await setDayPhoto(day.id, me.id, file);
+            day.photo_url = path;
+            day.photo_uploaded_by = me.id;
+            day.photo_uploaded_at = uploadedAt;
+            renderDayPhoto(day);
+          } catch (err) {
+            photoMsg.textContent = `Could not upload photo: ${err.message}`;
+            if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = day.photo_url ? 'Replace photo' : 'Add a photo'; }
+          }
+        });
+
+        document.getElementById('save-memory-btn')?.addEventListener('click', async () => {
+          const msg = document.getElementById('memory-msg');
+          try {
+            const capEl = document.getElementById('photo-caption');
+            await saveDayMemory(day.id, { caption: capEl ? capEl.value : undefined, memory: document.getElementById('shared-memory').value });
+            if (capEl) day.photo_caption = capEl.value.trim() || null;
+            day.shared_memory = document.getElementById('shared-memory').value.trim() || null;
+            msg.className = 'inline-msg ok'; msg.textContent = 'Saved.';
+          } catch (err) { msg.className = 'inline-msg error'; msg.textContent = `Could not save: ${err.message}`; }
+        });
+      }
     }
   </script>
 </Layout>

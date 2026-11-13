@@ -40,10 +40,11 @@ export function avatarHtml(profile, size = 32) {
 }
 
 export async function setAvatar(userId, file) {
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-  const path = `${userId}.${ext}`;
+  const ext = ((file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5)) || 'jpg';
+  // A new name for every upload so a previous profile picture's file is never overwritten.
+  const path = `${userId}-${Date.now()}.${ext}`;
   const { error: uploadError } = await supabase.storage.from('avatars').upload(path, file, {
-    upsert: true,
+    upsert: false,
     contentType: file.type || 'image/jpeg',
   });
   if (uploadError) throw uploadError;

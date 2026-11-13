@@ -15,3 +15,9 @@ dist/
 # editor / OS
 .DS_Store
 Thumbs.db
+
+# local dev backend (fake data only)
+dev-backend/node_modules/
+dev-backend/.data/
+.env.local
+supabase/.temp/

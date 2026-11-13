@@ -1,0 +1,117 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Our Timeline | Walk Together">
+  <p class="eyebrow">Our Timeline</p>
+  <h1>Our Walk Together timeline</h1>
+  <p class="home-subtitle">Every day we finish together, with our own photos and our own words.</p>
+
+  <div id="tl-controls" class="tl-controls" style="display:none;">
+    <button type="button" id="sort-new" class="btn-small is-on">Newest first</button>
+    <button type="button" id="sort-old" class="btn-small">Oldest first</button>
+  </div>
+  <div id="timeline-root"><p style="color:var(--ink-soft);">Loading&hellip;</p></div>
+
+  <script type="module">
+    import { supabase } from '../lib/supabase.js';
+    import { buildProfileMap, avatarHtml } from '../lib/avatars.js';
+    import { getDayPhotoUrl } from '../lib/dayPhotos.js';
+    import { parseScriptureRef } from '../lib/bible.js';
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) window.location.href = '/login';
+    const me = session?.user;
+
+    function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+    const fmt = iso => new Date(iso).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+    const root = document.getElementById('timeline-root');
+    const [weeksRes, daysRes, answersRes, profilesRes] = await Promise.all([
+      supabase.from('devotionals').select('*').order('week_start', { ascending: true }),
+      supabase.from('devotional_days').select('*'),
+      supabase.from('devotional_answers').select('*'),     // the database only returns what this person may see
+      supabase.from('profiles').select('id, display_name, avatar_url').order('display_name'),
+    ]);
+    const weeks = weeksRes.data || [];
+    const days = (daysRes.data || []).filter(d => d.devotional_id);
+    const answersAvailable = !answersRes.error;
+    const answers = answersRes.data || [];
+    const profilesData = profilesRes.data || [];
+    const profileMap = await buildProfileMap(profilesData);
+    const weekNumber = new Map(weeks.map((w, i) => [w.id, i + 1]));
+    const weekById = new Map(weeks.map(w => [w.id, w]));
+
+    // Build entries.
+    const entries = [];
+    for (const day of days) {
+      const dayAnswers = answers.filter(a => a.day_id === day.id && a.status === 'submitted');
+      // The database only shows the other person's answer once BOTH have submitted, so seeing a submitted
+      // answer from me AND from someone else means this day is complete.
+      const complete = !!day.daily_question
+        && dayAnswers.some(a => a.user_id === me.id) && dayAnswers.some(a => a.user_id !== me.id);
+      if (complete) {
+        const when = dayAnswers.map(a => a.submitted_at).sort().pop();     // the later of the two submissions
+        entries.push({ kind: 'complete', day, when, answers: dayAnswers });
+      } else if (day.photo_url) {
+        entries.push({ kind: 'photo', day, when: day.photo_uploaded_at, answers: [] });  // photo-only memory, real upload date
+      }
+    }
+
+    let newestFirst = true;
+    async function entryHtml(e) {
+      const { day } = e;
+      const week = weekById.get(day.devotional_id);
+      const ref = day.scripture_ref ? parseScriptureRef(day.scripture_ref).reference : '';
+      const photoUrl = day.photo_url ? await getDayPhotoUrl(day.photo_url) : null;
+      const label = e.kind === 'complete'
+        ? `${esc(fmt(e.when))}`
+        : `${e.when ? esc(fmt(e.when)) : 'Date unknown'} &middot; <span class="badge">Photo memory</span>`;
+      const ordered = profilesData.map(p => e.answers.find(a => a.user_id === p.id)).filter(Boolean);
+      const answerCols = e.kind === 'complete' ? `
+        <p class="tl-q">${esc(day.daily_question)}</p>
+        <div class="review-columns" style="margin-top:0.6rem;">
+          ${ordered.map(a => `
+            <div class="review-person">
+              <div class="review-person-head">${avatarHtml(profileMap[a.user_id], 28)}<div class="review-answer-name" style="margin:0;">${esc(profileMap[a.user_id]?.display_name || 'Someone')}</div></div>
+              <p class="answer-text">${esc(a.answer_text)}${a.edited_at ? `<span class="edited-tag">edited</span>` : ''}</p>
+            </div>`).join('')}
+        </div>` : '';
+      return `
+        <article class="tl-entry ${e.kind === 'photo' ? 'is-photo-only' : ''}">
+          <div class="card">
+            <p class="eyebrow">${label}</p>
+            <p class="week-meta">Week ${weekNumber.get(day.devotional_id) || '?'} &middot; Day ${esc(day.day_number)}${week ? ' &middot; ' + esc(week.title) : ''}</p>
+            <h2>${esc(day.title)}</h2>
+            ${ref ? `<p class="scripture-ref" style="margin:0.2rem 0 0;">${esc(ref)}</p>` : ''}
+            ${photoUrl ? `<img class="tl-photo" src="${photoUrl}" alt="Our photo from ${esc(day.title)}" loading="lazy" />` : ''}
+            ${day.photo_caption ? `<p class="tl-caption">${esc(day.photo_caption)}</p>` : ''}
+            ${answerCols}
+            ${day.shared_memory ? `<p class="tl-memory">${esc(day.shared_memory)}</p>` : ''}
+            <p style="margin:1.1rem 0 0;"><a class="btn btn-small btn-secondary" href="/devotionals/${esc(day.devotional_id)}/day/${esc(day.day_number)}">Revisit this devotional &rarr;</a></p>
+          </div>
+        </article>`;
+    }
+
+    async function render() {
+      if (!entries.length) {
+        root.innerHTML = `
+          <div class="empty-state" style="margin-top:2rem;">
+            <p style="margin:0 0 0.4rem; font-family:var(--font-display); font-size:1.2rem; color:var(--ink);">Your timeline is just beginning.</p>
+            <p style="margin:0;">Each day you both answer the Talk Together question will appear here, along with the photos you add.${answersAvailable ? '' : ' (Shared answers are not available yet.)'}</p>
+          </div>`;
+        document.getElementById('tl-controls').style.display = 'none';
+        return;
+      }
+      document.getElementById('tl-controls').style.display = 'flex';
+      const sorted = entries.slice().sort((a, b) => {
+        const d = new Date(a.when || 0) - new Date(b.when || 0);
+        return newestFirst ? -d : d;
+      });
+      const html = await Promise.all(sorted.map(entryHtml));
+      root.innerHTML = `<div class="timeline">${html.join('')}</div>`;
+    }
+    document.getElementById('sort-new').addEventListener('click', () => { newestFirst = true; document.getElementById('sort-new').classList.add('is-on'); document.getElementById('sort-old').classList.remove('is-on'); render(); });
+    document.getElementById('sort-old').addEventListener('click', () => { newestFirst = false; document.getElementById('sort-old').classList.add('is-on'); document.getElementById('sort-new').classList.remove('is-on'); render(); });
+    await render();
+  </script>
+</Layout>

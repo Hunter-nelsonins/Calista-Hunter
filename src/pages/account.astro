@@ -1,0 +1,139 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Account | Walk Together">
+  <div id="app" style="display:none;">
+    <p class="eyebrow">Account</p>
+    <h1 id="page-title">Account settings</h1>
+
+    <!-- shown after a temporary-password reset -->
+    <section id="force-section" class="account-section" style="display:none;">
+      <div class="card form-panel">
+        <p style="margin:0;">Welcome back. Please choose your own new password before continuing. The temporary one you were given will stop working.</p>
+        <div class="form-row"><label for="f-current">Temporary password</label><input type="password" id="f-current" autocomplete="current-password" /></div>
+        <div class="form-row"><label for="f-new">New password (at least 12 characters)</label><input type="password" id="f-new" autocomplete="new-password" /></div>
+        <div class="form-row"><label for="f-confirm">New password again</label><input type="password" id="f-confirm" autocomplete="new-password" /></div>
+        <div class="form-actions"><button type="button" id="f-save">Set my new password</button></div>
+        <p id="f-msg" class="inline-msg" role="status"></p>
+      </div>
+    </section>
+
+    <div id="normal-sections">
+      <section class="account-section">
+        <h2 style="font-size:1.15rem;">Profile picture</h2>
+        <div class="person-row"><span id="avatar-preview"></span>
+          <input type="file" id="avatar-input" accept="image/*,.heic,.heif" style="display:none;" />
+          <button type="button" id="avatar-btn" class="btn-small btn-secondary">Change photo</button></div>
+        <p id="avatar-msg" class="inline-msg" role="status"></p>
+      </section>
+
+      <section class="account-section">
+        <h2 style="font-size:1.15rem;">Display name</h2>
+        <div class="card form-panel">
+          <div class="form-row"><label for="display-name">Name shown to each other</label><input type="text" id="display-name" maxlength="50" /></div>
+          <div class="form-actions"><button type="button" id="name-save">Save name</button></div>
+          <p id="name-msg" class="inline-msg" role="status"></p>
+        </div>
+        <p class="account-meta">Username: <strong id="username-view">(not set)</strong> &mdash; the administrator can set this.</p>
+      </section>
+
+      <section class="account-section">
+        <h2 style="font-size:1.15rem;">Email address</h2>
+        <p class="account-meta">Signed in as <strong id="email-view"></strong><span id="email-pending"></span></p>
+        <div class="card form-panel">
+          <div class="form-row"><label for="new-email">New email address</label><input type="email" id="new-email" autocomplete="email" /></div>
+          <div class="form-row"><label for="email-pw">Your current password</label><input type="password" id="email-pw" autocomplete="current-password" /></div>
+          <div class="form-actions"><button type="button" id="email-save">Change email</button></div>
+          <p id="email-msg" class="inline-msg" role="status"></p>
+        </div>
+      </section>
+
+      <section class="account-section">
+        <h2 style="font-size:1.15rem;">Password</h2>
+        <div class="card form-panel">
+          <div class="form-row"><label for="p-current">Your current password</label><input type="password" id="p-current" autocomplete="current-password" /></div>
+          <div class="form-row"><label for="p-new">New password (at least 8 characters)</label><input type="password" id="p-new" autocomplete="new-password" /></div>
+          <div class="form-row"><label for="p-confirm">New password again</label><input type="password" id="p-confirm" autocomplete="new-password" /></div>
+          <div class="form-actions"><button type="button" id="p-save">Change password</button></div>
+          <p id="p-msg" class="inline-msg" role="status"></p>
+        </div>
+      </section>
+
+      <p><button type="button" id="signout-btn" class="btn-secondary">Sign out</button></p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { supabase } from '../lib/supabase.js';
+    import { buildProfileMap, avatarHtml, setAvatar } from '../lib/avatars.js';
+    import { getMyAccount, invokeAdmin, reauthenticate } from '../lib/account.js';
+
+    const acct = await getMyAccount();
+    if (!acct) { window.location.href = '/login'; }
+    else {
+      document.getElementById('app').style.display = 'block';
+      const user = acct.user;
+      const force = new URLSearchParams(location.search).get('force') === '1' || acct.mustChangePassword;
+      const say = (id, msg, kind) => { const e = document.getElementById(id); e.className = 'inline-msg ' + (kind || ''); e.textContent = msg; };
+
+      if (force) {
+        document.getElementById('page-title').textContent = 'Choose your new password';
+        document.getElementById('force-section').style.display = 'block';
+        document.getElementById('normal-sections').style.display = 'none';
+        document.getElementById('f-save').addEventListener('click', async () => {
+          const cur = document.getElementById('f-current').value, nw = document.getElementById('f-new').value, cf = document.getElementById('f-confirm').value;
+          if (nw !== cf) return say('f-msg', 'The two new passwords do not match.', 'error');
+          const { error } = await invokeAdmin({ action: 'complete_password_change', current_password: cur, new_password: nw });
+          if (error) return say('f-msg', error, 'error');
+          // sign in fresh with the new password so the session is clean
+          await supabase.auth.signInWithPassword({ email: user.email, password: nw });
+          say('f-msg', 'Your new password is set. Taking you home…', 'ok');
+          setTimeout(() => { window.location.href = '/'; }, 1200);
+        });
+      } else {
+        const { data: prof } = await supabase.from('profiles').select('id, display_name, avatar_url').eq('id', user.id).maybeSingle();
+        const map = await buildProfileMap(prof ? [prof] : []);
+        const showAvatar = () => { document.getElementById('avatar-preview').innerHTML = avatarHtml(map[user.id] || { display_name: prof?.display_name }, 56); };
+        showAvatar();
+        document.getElementById('display-name').value = prof?.display_name || '';
+        document.getElementById('username-view').textContent = acct.username || '(not set)';
+        document.getElementById('email-view').textContent = user.email;
+        if (user.new_email) document.getElementById('email-pending').textContent = ` (waiting for you to confirm ${user.new_email} from your inbox)`;
+
+        document.getElementById('avatar-btn').addEventListener('click', () => document.getElementById('avatar-input').click());
+        document.getElementById('avatar-input').addEventListener('change', async (e) => {
+          const file = e.target.files?.[0]; if (!file) return;
+          try { await setAvatar(user.id, file); location.reload(); } catch (err) { say('avatar-msg', `Could not upload: ${err.message}`, 'error'); }
+        });
+
+        document.getElementById('name-save').addEventListener('click', async () => {
+          const name = document.getElementById('display-name').value;
+          const { error } = await invokeAdmin({ action: 'update_account', target_id: user.id, fields: { display_name: name } });
+          if (error) return say('name-msg', error, 'error');
+          say('name-msg', 'Saved.', 'ok');
+        });
+
+        document.getElementById('email-save').addEventListener('click', async () => {
+          const email = document.getElementById('new-email').value.trim(), pw = document.getElementById('email-pw').value;
+          if (!email) return say('email-msg', 'Please type the new email address.', 'error');
+          if (!(await reauthenticate(user.email, pw))) return say('email-msg', 'That password was not correct.', 'error');
+          const { error } = await supabase.auth.updateUser({ email });
+          if (error) return say('email-msg', error.message, 'error');
+          say('email-msg', `We sent a confirmation link to ${email}. Your email changes after you click it.`, 'ok');
+        });
+
+        document.getElementById('p-save').addEventListener('click', async () => {
+          const cur = document.getElementById('p-current').value, nw = document.getElementById('p-new').value, cf = document.getElementById('p-confirm').value;
+          if (nw !== cf) return say('p-msg', 'The two new passwords do not match.', 'error');
+          if (!(await reauthenticate(user.email, cur))) return say('p-msg', 'Your current password was not correct.', 'error');
+          const { error } = await supabase.auth.updateUser({ password: nw });
+          if (error) return say('p-msg', error.message, 'error');
+          say('p-msg', 'Your password has been changed.', 'ok');
+          ['p-current', 'p-new', 'p-confirm'].forEach(i => { document.getElementById(i).value = ''; });
+        });
+
+        document.getElementById('signout-btn').addEventListener('click', async () => { await supabase.auth.signOut(); window.location.href = '/login'; });
+      }
+    }
+  </script>
+</Layout>
