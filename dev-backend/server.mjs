@@ -16,8 +16,8 @@ const SITE = 'http://localhost:4321';
 const BUCKETS = new Set(['avatars', 'devotional-photos']);
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-export async function startServer({ port = 54321, stranger = false, quiet = false, expandedSample = true, migrate = true } = {}) {
-  const db = await createDb({ stranger, migrate });
+export async function startServer({ port = 54321, stranger = false, quiet = false, expandedSample = true, migrate = true, dbOptions = {} } = {}) {
+  const db = await createDb({ stranger, migrate, ...dbOptions });
   if (expandedSample && migrate) await seedExpandedSample(db);
   const secret = crypto.randomBytes(32);
   const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-local-storage-'));

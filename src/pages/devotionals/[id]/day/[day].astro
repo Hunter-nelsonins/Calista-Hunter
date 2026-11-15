@@ -26,10 +26,19 @@ import Layout from '../../../../layouts/Layout.astro';
       return div.innerHTML;
     }
     // Turns saved text with blank-line breaks into paragraphs (safe: escaped first).
+    // Also understands simple lists: lines starting with "- " become bullet points.
     function paragraphs(text) {
-      return String(text || '').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
-        .map(p => `<p>${esc(p).replace(/\n/g, '<br />')}</p>`).join('');
+      const bullet = l => /^[-•]\s+/.test(l);
+      const list = items => `<ul class="soft-list">${items.map(l => `<li>${esc(l.replace(/^[-•]\s+/, ''))}</li>`).join('')}</ul>`;
+      return String(text || '').split(/\n\s*\n/).map(b => b.trim()).filter(Boolean).map(block => {
+        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.every(bullet)) return list(lines);
+        const firstBullet = lines.findIndex(bullet);
+        if (firstBullet > 0) return `<p>${esc(lines.slice(0, firstBullet).join(' '))}</p>${list(lines.slice(firstBullet))}`;
+        return `<p>${esc(lines.join(' '))}</p>`;
+      }).join('');
     }
+    const wordCount = s => (String(s || '').match(/\S+/g) || []).length;
     function fmtDate(iso) {
       return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
     }
@@ -96,6 +105,28 @@ import Layout from '../../../../layouts/Layout.astro';
         } catch { /* reference alone is still shown */ }
       }
 
+      // Longer main reading (new, optional)
+      let mainRef = '';
+      let mainVerses = [];
+      let mainText = null;
+      if (hasNewColumns && day.main_reading_ref) {
+        mainRef = parseScriptureRef(day.main_reading_ref).reference;
+        try {
+          const p = await getPassage(day.main_reading_ref);
+          if (p?.text) { mainText = p.text; mainRef = p.reference || mainRef; mainVerses = p.verses || []; }
+        } catch { /* reference alone is still shown */ }
+      }
+      const mainHtml = mainVerses.length
+        ? mainVerses.map(v => `<span class="vnum">${esc(v.n)}</span>${esc(v.t.replace(/\s*\n\s*/g, ' '))}`).join(' ')
+        : (mainText ? esc(mainText).replace(/\n/g, '<br />') : '');
+
+      // Rough reading time for the whole devotional (about 200 words a minute), shown only when expanded
+      const hasExpanded = hasNewColumns && (day.understanding_text || day.expanded_reflection || day.looking_back_text || day.main_reading_ref);
+      const readMinutes = hasExpanded ? Math.max(3, Math.round((
+        wordCount(scriptureText) + wordCount(mainText) + wordCount(supportText) + wordCount(day.understanding_text) + wordCount(day.simple_explanation) +
+        wordCount(day.expanded_reflection) + wordCount(day.daily_application) + wordCount(day.looking_back_text) + wordCount(day.daily_question) + wordCount(day.prayer_prompts)
+      ) / 200)) : 0;
+
       const nextHref = nextDay ? `/devotionals/${id}/day/${nextDay}` : `/devotionals/${id}#discussion`;
 
       el.innerHTML = `
@@ -107,7 +138,7 @@ import Layout from '../../../../layouts/Layout.astro';
         <p class="eyebrow">${esc(devo.title)} &bull; ${esc(devo.passage_ref)}</p>
         <p class="badge" style="margin:0.75rem 0 1.25rem; display:inline-block;">Day ${idx + 1} of ${days.length}</p>
         <h1>${esc(day.title)}</h1>
-        <div class="hide-rt" style="margin:0 0 0.5rem;"><button type="button" id="rt-enter" class="btn-small btn-secondary">Read Together mode</button></div>
+        <div class="hide-rt" style="margin:0 0 0.5rem;"><button type="button" id="rt-enter" class="btn-small btn-secondary">Read Together mode</button>${readMinutes ? `<span class="read-time">About ${readMinutes} min read</span>` : ''}</div>
 
         ${parsedRef.reference ? `
           <div class="scripture-card">
@@ -115,6 +146,14 @@ import Layout from '../../../../layouts/Layout.astro';
             <p class="scripture-ref">${esc(scriptureShownRef)}</p>
             ${scriptureText ? `<p class="scripture-text">${esc(scriptureText)}</p>` : ''}
             ${scriptureIsFallback ? `<p class="card-meta" style="margin:0.75rem 0 0;">Saved text shown &mdash; live Bible text is unavailable right now.</p>` : ''}
+          </div>
+        ` : ''}
+
+        ${mainRef ? `
+          <div class="reading-card">
+            <p class="eyebrow">Today's reading</p>
+            <p class="scripture-ref">${esc(mainRef)}</p>
+            ${mainHtml ? `<p class="reading-text">${mainHtml}</p>` : `<p class="card-meta" style="margin:0;">The Bible text could not be loaded just now. Open ${esc(mainRef)} in your own Bible, or refresh in a moment.</p>`}
           </div>
         ` : ''}
 
@@ -127,7 +166,7 @@ import Layout from '../../../../layouts/Layout.astro';
         ` : ''}
 
         ${hasNewColumns && day.understanding_text ? `
-          <p class="eyebrow section-label">Understanding the Scripture</p>
+          <p class="eyebrow section-label">Understanding the Bible</p>
           <div class="prose">${paragraphs(day.understanding_text)}</div>
         ` : ''}
 
@@ -135,7 +174,7 @@ import Layout from '../../../../layouts/Layout.astro';
         <p class="rt-text" style="font-size:1.05rem;">${esc(day.simple_explanation)}</p>
 
         ${hasNewColumns && day.expanded_reflection ? `
-          <p class="eyebrow section-label deeper-label">Going deeper</p>
+          <p class="eyebrow section-label deeper-label">What this means for us</p>
           <div class="prose">${paragraphs(day.expanded_reflection)}</div>
         ` : ''}
 
@@ -143,6 +182,11 @@ import Layout from '../../../../layouts/Layout.astro';
         <div class="card" style="margin:0.5rem 0 1.5rem;">
           <p class="rt-text" style="margin:0;">${esc(day.daily_application)}</p>
         </div>
+
+        ${hasNewColumns && day.looking_back_text ? `
+          <p class="eyebrow section-label">Looking back together</p>
+          <div class="looking-back prose">${paragraphs(day.looking_back_text)}</div>
+        ` : ''}
 
         ${day.daily_question ? `
           <p class="eyebrow section-label">Talk Together</p>
@@ -155,10 +199,11 @@ import Layout from '../../../../layouts/Layout.astro';
           <div id="day-photo-body">Loading&hellip;</div>
         </div>
 
-        ${hasNewColumns && day.closing_prayer ? `
-          <div class="prayer-card">
-            <p class="eyebrow">Pray Together</p>
-            ${paragraphs(day.closing_prayer)}
+        ${hasNewColumns && day.prayer_prompts ? `
+          <div class="prayer-soft">
+            <p class="eyebrow">Take it to prayer</p>
+            <p class="soft-note">Optional, and just for you. Nothing to write, share, or confirm.</p>
+            ${paragraphs(day.prayer_prompts)}
           </div>
         ` : ''}
 

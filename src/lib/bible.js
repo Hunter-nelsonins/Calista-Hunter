@@ -34,19 +34,37 @@ export function parseScriptureRef(raw) {
   if (!raw) return { reference: '', quote: null };
   const s = String(raw).trim().replace(/^Day\s*\d+\s*[:\-–—]\s*/i, '');
   const q = s.match(/[—–-]\s*["“‘'](.+?)["”’']?\s*$/s);
-  const m = s.match(/^((?:[1-3]\s?)?[A-Za-z][A-Za-z.\s]*?\s*\d+(?:\s*:\s*\d+(?:\s*[-–]\s*\d+)?(?:\s*,\s*\d+(?:\s*[-–]\s*\d+)?)*)?)/);
+  const m = s.match(/^((?:[1-3]\s?)?[A-Za-z][A-Za-z.\s]*?\s*\d+(?:\s*:\s*\d+(?:\s*[-–]\s*\d+(?:\s*:\s*\d+)?)?(?:\s*,\s*\d+(?:\s*[-–]\s*\d+)?)*)?)/);
   const reference = (m ? m[1] : s.split(/\s[—–-]\s/)[0]).replace(/\s+/g, ' ').trim();
   return { reference, quote: q ? q[1].trim() : null };
+}
+
+// Passage lookups are remembered for the browser session so paging through days stays fast and stays
+// within the free API's rate limit. Failures are never cached.
+function cacheGet(key) {
+  try { const v = sessionStorage.getItem('wt-passage:' + key); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+function cacheSet(key, value) {
+  try { sessionStorage.setItem('wt-passage:' + key, JSON.stringify(value)); } catch { /* storage unavailable */ }
 }
 
 export async function getPassage(rawRef) {
   const { reference } = parseScriptureRef(rawRef);
   if (!reference) return null;
+  const cached = cacheGet(reference);
+  if (cached) return cached;
   try {
     const res = await fetch(`https://bible-api.com/${encodeURIComponent(reference)}?translation=web`);
     if (!res.ok) return null;
     const data = await res.json();
-    return { reference: data.reference, text: data.text.trim() };
+    const result = {
+      reference: data.reference,
+      text: data.text.trim(),
+      // verse-by-verse, so longer readings can show verse numbers
+      verses: Array.isArray(data.verses) ? data.verses.map(v => ({ n: v.verse, t: String(v.text || '').trim() })) : [],
+    };
+    cacheSet(reference, result);
+    return result;
   } catch {
     return null;
   }

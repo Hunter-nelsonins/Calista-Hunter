@@ -127,21 +127,29 @@ import Layout from '../layouts/Layout.astro';
         </div>
         <div id="day-new-fields" style="display:none; flex-direction:column; gap:1rem;">
           <p class="eyebrow" style="margin:0.5rem 0 0;">Optional extras (shown in addition to the sections above, never instead of them)</p>
+          <div class="form-row" id="day-main-row" style="display:none;">
+            <label for="day-main">Today's reading (the longer main passage, e.g. James 1:19-27)</label>
+            <input type="text" id="day-main" placeholder="e.g. James 1:19-27" />
+          </div>
           <div class="form-row">
             <label for="day-support">Supporting Scripture</label>
             <input type="text" id="day-support" placeholder="e.g. Proverbs 18:13" />
           </div>
           <div class="form-row">
-            <label for="day-understanding">Understanding the Scripture (blank line = new paragraph)</label>
+            <label for="day-understanding">Understanding the Bible (blank line = new paragraph)</label>
             <textarea id="day-understanding" rows="8"></textarea>
           </div>
           <div class="form-row">
-            <label for="day-expanded">Expanded reflection (blank line = new paragraph)</label>
+            <label for="day-expanded">What this means for us (blank line = new paragraph)</label>
             <textarea id="day-expanded" rows="8"></textarea>
           </div>
-          <div class="form-row">
-            <label for="day-prayer">Prayer Together</label>
-            <textarea id="day-prayer" rows="4"></textarea>
+          <div class="form-row" id="day-lookback-row" style="display:none;">
+            <label for="day-lookback">Looking back together (evening reflection; start a line with "- " for a list)</label>
+            <textarea id="day-lookback" rows="6"></textarea>
+          </div>
+          <div class="form-row" id="day-prompts-row" style="display:none;">
+            <label for="day-prompts">Take it to prayer (optional personal prompts; start a line with "- " for each)</label>
+            <textarea id="day-prompts" rows="4"></textarea>
           </div>
         </div>
         <div class="form-actions">
@@ -213,10 +221,14 @@ import Layout from '../layouts/Layout.astro';
 
       // The optional new day fields exist only once the additive database update has been applied.
       let hasNewDayFields = false;
+      let hasEveningFields = false;
       {
         const probe = await supabase.from('devotional_days').select('understanding_text').limit(1);
         hasNewDayFields = !probe.error;
         document.getElementById('day-new-fields').style.display = hasNewDayFields ? 'flex' : 'none';
+        const probe2 = await supabase.from('devotional_days').select('prayer_prompts').limit(1);
+        hasEveningFields = !probe2.error;
+        ['day-main-row', 'day-lookback-row', 'day-prompts-row'].forEach(i => { document.getElementById(i).style.display = hasEveningFields ? 'flex' : 'none'; });
       }
 
       let weeks = [];
@@ -344,7 +356,11 @@ import Layout from '../layouts/Layout.astro';
           document.getElementById('day-support').value = day?.supporting_scripture_ref || '';
           document.getElementById('day-understanding').value = day?.understanding_text || '';
           document.getElementById('day-expanded').value = day?.expanded_reflection || '';
-          document.getElementById('day-prayer').value = day?.closing_prayer || '';
+        }
+        if (hasEveningFields) {
+          document.getElementById('day-main').value = day?.main_reading_ref || '';
+          document.getElementById('day-lookback').value = day?.looking_back_text || '';
+          document.getElementById('day-prompts').value = day?.prayer_prompts || '';
         }
         dayFormPanel.style.display = 'flex';
         dayFormPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -372,7 +388,12 @@ import Layout from '../layouts/Layout.astro';
           payload.supporting_scripture_ref = document.getElementById('day-support').value.trim() || null;
           payload.understanding_text = document.getElementById('day-understanding').value.trim() || null;
           payload.expanded_reflection = document.getElementById('day-expanded').value.trim() || null;
-          payload.closing_prayer = document.getElementById('day-prayer').value.trim() || null;
+          // (the older closing_prayer column is intentionally never written from here; its saved text is kept as-is)
+        }
+        if (hasEveningFields) {
+          payload.main_reading_ref = document.getElementById('day-main').value.trim() || null;
+          payload.looking_back_text = document.getElementById('day-lookback').value.trim() || null;
+          payload.prayer_prompts = document.getElementById('day-prompts').value.trim() || null;
         }
         if (!payload.day_number || !payload.title || !payload.simple_explanation || !payload.daily_application) {
           alert('Day number, title, simple explanation, and daily application are required.');

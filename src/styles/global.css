@@ -610,3 +610,21 @@ body.read-together .prayer-card p { font-size: 1.35rem; line-height: 1.9; }
 .caption-row { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.8rem; }
 .rt-only { display: none; }
 body.read-together .rt-only { display: block; }
+
+/* ---- Expanded devotional: main reading, evening reflection, personal prayer prompts ---- */
+.reading-card { background: #F7F4E9; border: 1px solid var(--line); border-left: 3px solid var(--dawn-gold); border-radius: var(--radius); padding: 1.5rem 1.6rem; margin: 1.5rem 0; }
+.reading-card .eyebrow { margin-bottom: 0.5rem; }
+.reading-text { font-family: var(--font-display); font-size: 1.15rem; line-height: 1.85; margin: 0; }
+.reading-text .vnum { font-family: var(--font-mono); font-size: 0.65rem; vertical-align: super; color: var(--olive-deep); margin-right: 0.2rem; }
+.read-time { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-soft); margin-left: 0.6rem; }
+.soft-list { margin: 0.2rem 0 1rem; padding-left: 1.2rem; }
+.soft-list li { margin-bottom: 0.55rem; }
+.looking-back { background: var(--paper-dim); border-radius: var(--radius); padding: 1.4rem 1.6rem; margin: 0.5rem 0 1.5rem; }
+.looking-back p { margin: 0 0 0.9rem; }
+.looking-back p:last-child, .looking-back ul:last-child { margin-bottom: 0; }
+.prayer-soft { border: 1px solid var(--line); border-left: 3px solid var(--dusk-indigo); background: #F7F4E9; border-radius: var(--radius); padding: 1.4rem 1.6rem; margin: 1.75rem 0; }
+.prayer-soft .eyebrow { color: var(--dusk-indigo); margin-bottom: 0.3rem; }
+.prayer-soft .soft-note { font-size: 0.88rem; color: var(--ink-soft); font-style: italic; margin: 0 0 0.9rem; }
+body.read-together .reading-text { font-size: 1.55rem; line-height: 1.95; }
+body.read-together .looking-back p, body.read-together .prayer-soft li, body.read-together .looking-back li { font-size: 1.25rem; line-height: 1.8; }
+@media (max-width: 680px) { body.read-together .reading-text { font-size: 1.35rem; } .reading-card { padding: 1.2rem 1.15rem; } }

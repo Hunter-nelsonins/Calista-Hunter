@@ -24,7 +24,7 @@ const WEEK_IDS = ['aaaaaaaa-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-80
 export const dayId = (w, d) => `bbbbbbbb-000${w}-4000-8000-00000000000${d}`;
 export const ORPHAN_DAY_ID = 'bbbbbbbb-0000-4000-8000-0000000000ff';
 
-export async function createDb({ migrate = true, fake = true, stranger = false, harden = true } = {}) {
+export async function createDb({ migrate = true, fake = true, stranger = false, harden = true, afterMigrate = null } = {}) {
   // Return dates/timestamps as text in the same shape Supabase's API uses ("2026-08-12", "2026-08-08T15:00:00+00:00").
   const pad = v => (typeof v === 'string' ? v : String(v));
   const db = new PGlite({ parsers: {
@@ -59,6 +59,8 @@ export async function createDb({ migrate = true, fake = true, stranger = false, 
   if (fake) await seedFakeData(db);
   if (migrate) await db.exec(fs.readFileSync(path.join(SQL_DIR, '005_additive_walk_together.sql'), 'utf8'));
   if (migrate && harden) await db.exec(fs.readFileSync(path.join(SQL_DIR, '006_hardening_members_only.sql'), 'utf8'));
+  if (migrate) await db.exec(fs.readFileSync(path.join(SQL_DIR, '007_expanded_content_fields.sql'), 'utf8'));
+  if (afterMigrate) await afterMigrate(db);
   return db;
 }
 

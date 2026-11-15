@@ -6,7 +6,7 @@ select jsonb_build_object(
   'devotionals',     jsonb_build_object('rows',(select count(*) from public.devotionals),     'md5',md5((select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]'::jsonb)::text from public.devotionals t))),
   'devotional_days', jsonb_build_object('rows',(select count(*) from public.devotional_days),
                        'orphan_rows',(select count(*) from public.devotional_days where devotional_id is null),
-                       'md5_original_columns',md5((select coalesce(jsonb_agg((to_jsonb(t) - array['supporting_scripture_ref','understanding_text','expanded_reflection','closing_prayer','photo_caption','shared_memory']) order by t.id),'[]'::jsonb)::text from public.devotional_days t))),
+                       'md5_original_columns',md5((select coalesce(jsonb_agg((to_jsonb(t) - array['supporting_scripture_ref','understanding_text','expanded_reflection','closing_prayer','photo_caption','shared_memory','main_reading_ref','looking_back_text','prayer_prompts']) order by t.id),'[]'::jsonb)::text from public.devotional_days t))),
   'prayers',         jsonb_build_object('rows',(select count(*) from public.prayers),         'md5',md5((select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]'::jsonb)::text from public.prayers t))),
   'checkins',        jsonb_build_object('rows',(select count(*) from public.checkins),        'md5',md5((select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]'::jsonb)::text from public.checkins t))),
   'vision_entries',  jsonb_build_object('rows',(select count(*) from public.vision_entries),  'md5',md5((select coalesce(jsonb_agg(to_jsonb(t) order by t.id),'[]'::jsonb)::text from public.vision_entries t))),
